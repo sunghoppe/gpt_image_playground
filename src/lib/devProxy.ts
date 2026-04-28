@@ -2,6 +2,7 @@ export interface DevProxyConfig {
   enabled: boolean
   prefix: string
   target: string
+  targetOrigin: string
   changeOrigin: boolean
   secure: boolean
 }
@@ -30,12 +31,30 @@ export function normalizeBaseUrl(baseUrl: string): string {
   }
 }
 
+export function normalizeAzureResourceUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim()
+  if (!trimmed) return ''
+
+  const input = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`
+
+  try {
+    const url = new URL(input)
+    return url.origin
+  } catch {
+    return trimmed.replace(/\/+$/, '')
+  }
+}
+
 export function normalizeDevProxyConfig(input: unknown): DevProxyConfig | null {
   if (!input || typeof input !== 'object') return null
 
   const record = input as Record<string, unknown>
-  const target = normalizeBaseUrl(typeof record.target === 'string' ? record.target : '')
-  if (!target) return null
+  const rawTarget = typeof record.target === 'string' ? record.target : ''
+  const target = normalizeBaseUrl(rawTarget)
+  const targetOrigin = normalizeAzureResourceUrl(rawTarget)
+  if (!target || !targetOrigin) return null
 
   const rawPrefix = typeof record.prefix === 'string' ? record.prefix : '/api-proxy'
   const trimmedPrefix = rawPrefix.trim().replace(/^\/+/, '').replace(/\/+$/, '')
@@ -45,6 +64,7 @@ export function normalizeDevProxyConfig(input: unknown): DevProxyConfig | null {
     enabled: Boolean(record.enabled),
     prefix,
     target,
+    targetOrigin,
     changeOrigin: record.changeOrigin !== false,
     secure: Boolean(record.secure),
   }
@@ -66,6 +86,28 @@ export function buildApiUrl(baseUrl: string, path: string, proxyConfig?: DevProx
   }
 
   return normalizedBaseUrl ? `${normalizedBaseUrl}/${apiPath}` : `/${apiPath}`
+}
+
+export function buildAzureApiUrl(
+  baseUrl: string,
+  deployment: string,
+  path: string,
+  apiVersion: string,
+  proxyConfig?: DevProxyConfig | null,
+): string {
+  const normalizedBaseUrl = normalizeAzureResourceUrl(baseUrl)
+  const normalizedDeployment = encodeURIComponent(deployment.trim())
+  const endpointPath = path.replace(/^\/+/, '')
+  const query = new URLSearchParams({ 'api-version': apiVersion.trim() }).toString()
+  const apiPath = `openai/deployments/${normalizedDeployment}/${endpointPath}`
+  const useProxy =
+    Boolean(proxyConfig?.enabled) &&
+    Boolean(proxyConfig?.targetOrigin) &&
+    normalizedBaseUrl === proxyConfig!.targetOrigin
+  const prefix = useProxy ? proxyConfig!.prefix : normalizedBaseUrl
+  const url = prefix ? `${prefix}/${apiPath}` : `/${apiPath}`
+
+  return `${url}?${query}`
 }
 
 export function resolveDevProxyConfig(input: unknown, isDev: boolean): DevProxyConfig | null {

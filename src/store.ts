@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
 import type {
   AppSettings,
   TaskParams,
@@ -23,13 +22,14 @@ import {
   hashDataUrl,
 } from './lib/db'
 import { callImageApi } from './lib/api'
+import { apiGet, apiPut } from './lib/serverData'
 import { validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask } from './lib/mask'
 import { normalizeImageSize } from './lib/size'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 
 // ===== Image cache =====
-// 内存缓存，id → dataUrl，避免每次从 IndexedDB 读取
+// 内存缓存，id → dataUrl，避免每次从服务端读取
 
 const imageCache = new Map<string, string>()
 
@@ -119,27 +119,35 @@ interface AppState {
 }
 
 export const useStore = create<AppState>()(
-  persist(
     (set, get) => ({
       // Settings
       settings: { ...DEFAULT_SETTINGS },
-      setSettings: (s) => set((st) => ({
-        settings: {
+      setSettings: (s) => set((st) => {
+        const nextSettings = {
           ...st.settings,
           ...s,
+          apiProvider:
+            s.apiProvider === 'openai' || s.apiProvider === 'azure'
+              ? s.apiProvider
+              : st.settings.apiProvider ?? DEFAULT_SETTINGS.apiProvider,
           apiMode:
             s.apiMode === 'images' || s.apiMode === 'responses'
               ? s.apiMode
               : st.settings.apiMode ?? DEFAULT_SETTINGS.apiMode,
+          azureApiVersion: s.azureApiVersion ?? st.settings.azureApiVersion ?? DEFAULT_SETTINGS.azureApiVersion,
           codexCli: s.codexCli ?? st.settings.codexCli ?? DEFAULT_SETTINGS.codexCli,
-        },
-      })),
+        }
+        void apiPut('/api/settings', s).catch((error) => st.showToast(`保存设置失败：${error instanceof Error ? error.message : String(error)}`, 'error'))
+        return { settings: nextSettings }
+      }),
       dismissedCodexCliPrompts: [],
-      dismissCodexCliPrompt: (key) => set((st) => ({
-        dismissedCodexCliPrompts: st.dismissedCodexCliPrompts.includes(key)
+      dismissCodexCliPrompt: (key) => set((st) => {
+        const dismissedCodexCliPrompts = st.dismissedCodexCliPrompts.includes(key)
           ? st.dismissedCodexCliPrompts
-          : [...st.dismissedCodexCliPrompts, key],
-      })),
+          : [...st.dismissedCodexCliPrompts, key]
+        void apiPut('/api/dismissed-codex-cli-prompts', { values: dismissedCodexCliPrompts }).catch(() => undefined)
+        return { dismissedCodexCliPrompts }
+      }),
 
       // Input
       prompt: '',
@@ -181,7 +189,11 @@ export const useStore = create<AppState>()(
 
       // Params
       params: { ...DEFAULT_PARAMS },
-      setParams: (p) => set((s) => ({ params: { ...s.params, ...p } })),
+      setParams: (p) => set((s) => {
+        const params = { ...s.params, ...p }
+        void apiPut('/api/params', params).catch((error) => s.showToast(`保存参数失败：${error instanceof Error ? error.message : String(error)}`, 'error'))
+        return { params }
+      }),
 
       // Tasks
       tasks: [],
@@ -235,15 +247,6 @@ export const useStore = create<AppState>()(
       confirmDialog: null,
       setConfirmDialog: (confirmDialog) => set({ confirmDialog }),
     }),
-    {
-      name: 'gpt-image-playground',
-      partialize: (state) => ({
-        settings: state.settings,
-        params: state.params,
-        dismissedCodexCliPrompts: state.dismissedCodexCliPrompts,
-      }),
-    },
-  ),
 )
 
 // ===== Actions =====
@@ -276,9 +279,15 @@ export function showCodexCliPrompt(force = false, reason = '接口返回的提�
   })
 }
 
-/** 初始化：从 IndexedDB 加载任务和图片缓存，清理孤立图片 */
+/** 初始化：从服务端加载任务和图片缓存，清理孤立图片 */
 export async function initStore() {
-  const tasks = await getAllTasks()
+  const bootstrap = await apiGet<{ settings: AppSettings; params: TaskParams; tasks: TaskRecord[]; dismissedCodexCliPrompts: string[] }>('/api/bootstrap')
+  useStore.setState({
+    settings: { ...DEFAULT_SETTINGS, ...bootstrap.settings },
+    params: { ...DEFAULT_PARAMS, ...bootstrap.params },
+    dismissedCodexCliPrompts: bootstrap.dismissedCodexCliPrompts ?? [],
+  })
+  const tasks = bootstrap.tasks
   useStore.getState().setTasks(tasks)
 
   // 收集所有任务引用的图片 id
@@ -305,7 +314,7 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
   const { settings, prompt, inputImages, maskDraft, params, showToast, setConfirmDialog } =
     useStore.getState()
 
-  if (!settings.apiKey) {
+  if (!settings.apiKey && !settings.hasApiKey) {
     showToast('请先在设置中配置 API Key', 'error')
     useStore.getState().setShowSettings(true)
     return
@@ -348,7 +357,7 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
     }
   }
 
-  // 持久化输入图片到 IndexedDB（此前只在内存缓存中）
+  // 持久化输入图片到服务端（此前只在内存缓存中）
   for (const img of orderedInputImages) {
     await storeImage(img.dataUrl)
   }
@@ -473,7 +482,7 @@ async function executeTask(taskId: string) {
     useStore.getState().setDetailTaskId(taskId)
   }
 
-  // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载）
+  // 释放输入图片的内存缓存（已持久化到服务端，后续按需加载）
   for (const imgId of task.inputImageIds) {
     imageCache.delete(imgId)
   }
@@ -768,7 +777,7 @@ export async function importData(file: File) {
   }
 }
 
-/** 添加图片到输入（文件上传）—— 仅放入内存缓存，不写 IndexedDB */
+/** 添加图片到输入（文件上传）—— 仅放入内存缓存，不立即写入服务端 */
 export async function addImageFromFile(file: File): Promise<void> {
   if (!file.type.startsWith('image/')) return
   const dataUrl = await fileToDataUrl(file)

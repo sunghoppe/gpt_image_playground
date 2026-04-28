@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { normalizeBaseUrl } from '../lib/api'
+import { normalizeAzureResourceUrl, normalizeBaseUrl } from '../lib/api'
 import { useStore, exportData, importData, clearAllData } from '../store'
-import { DEFAULT_IMAGES_MODEL, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, type AppSettings } from '../types'
+import { DEFAULT_AZURE_API_VERSION, DEFAULT_IMAGES_MODEL, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, type AppSettings } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import Select from './Select'
 
@@ -27,14 +27,19 @@ export default function SettingsModal() {
   }, [showSettings, settings])
 
   const commitSettings = (nextDraft: AppSettings) => {
+    const apiProvider = nextDraft.apiProvider === 'azure' ? 'azure' : DEFAULT_SETTINGS.apiProvider
     const apiMode = nextDraft.apiMode === 'responses' ? 'responses' : DEFAULT_SETTINGS.apiMode
     const defaultModel = getDefaultModelForMode(apiMode)
+    const normalizeUrl = apiProvider === 'azure' ? normalizeAzureResourceUrl : normalizeBaseUrl
+    const defaultBaseUrl = apiProvider === 'azure' ? 'https://你的资源名.openai.azure.com' : DEFAULT_SETTINGS.baseUrl
     const normalizedDraft = {
       ...nextDraft,
+      apiProvider,
       apiMode,
-      baseUrl: normalizeBaseUrl(nextDraft.baseUrl.trim() || DEFAULT_SETTINGS.baseUrl),
-      apiKey: nextDraft.apiKey,
+      baseUrl: normalizeUrl(nextDraft.baseUrl.trim() || defaultBaseUrl),
+      apiKey: nextDraft.apiKey.trim(),
       model: nextDraft.model.trim() || defaultModel,
+      azureApiVersion: nextDraft.azureApiVersion.trim() || DEFAULT_AZURE_API_VERSION,
       timeout: Number(nextDraft.timeout) || DEFAULT_SETTINGS.timeout,
     }
     setDraft(normalizedDraft)
@@ -112,8 +117,35 @@ export default function SettingsModal() {
             </h4>
             <div className="space-y-4">
               <label className="block">
+                <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">API 提供方</span>
+                <Select
+                  value={draft.apiProvider ?? DEFAULT_SETTINGS.apiProvider}
+                  onChange={(value) => {
+                    const apiProvider = value as AppSettings['apiProvider']
+                    const nextDraft = {
+                      ...draft,
+                      apiProvider,
+                      baseUrl: apiProvider === 'azure'
+                        ? normalizeAzureResourceUrl(draft.baseUrl || 'https://你的资源名.openai.azure.com')
+                        : normalizeBaseUrl(draft.baseUrl || DEFAULT_SETTINGS.baseUrl),
+                    }
+                    setDraft(nextDraft)
+                    commitSettings(nextDraft)
+                  }}
+                  options={[
+                    { label: 'OpenAI', value: 'openai' },
+                    { label: 'Azure OpenAI', value: 'azure' },
+                  ]}
+                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                />
+                <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                  支持通过查询参数覆盖：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">apiProvider=openai</code> 或 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">apiProvider=azure</code>。
+                </div>
+              </label>
+
+              <label className="block">
                 <div className="mb-1 flex items-center justify-between">
-                  <span className="block text-xs text-gray-500 dark:text-gray-400">API URL</span>
+                  <span className="block text-xs text-gray-500 dark:text-gray-400">{(draft.apiProvider ?? DEFAULT_SETTINGS.apiProvider) === 'azure' ? 'Azure 资源 URL' : 'API URL'}</span>
                   <div
                     onClick={(e) => {
                       e.preventDefault()
@@ -136,11 +168,11 @@ export default function SettingsModal() {
                   onChange={(e) => setDraft((prev) => ({ ...prev, baseUrl: e.target.value }))}
                   onBlur={(e) => commitSettings({ ...draft, baseUrl: e.target.value })}
                   type="text"
-                  placeholder={DEFAULT_SETTINGS.baseUrl}
+                  placeholder={(draft.apiProvider ?? DEFAULT_SETTINGS.apiProvider) === 'azure' ? 'https://你的资源名.openai.azure.com' : DEFAULT_SETTINGS.baseUrl}
                   className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                 />
                 <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
-                  支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code>，<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">codexCli=true</code>
+                  {(draft.apiProvider ?? DEFAULT_SETTINGS.apiProvider) === 'azure' ? 'Azure 模式请填写资源根地址，不需要包含 /openai/deployments。支持：' : '支持通过查询参数覆盖：'} <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code>，<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">codexCli=true</code>
                 </div>
               </label>
 
@@ -152,7 +184,7 @@ export default function SettingsModal() {
                     onChange={(e) => setDraft((prev) => ({ ...prev, apiKey: e.target.value }))}
                     onBlur={(e) => commitSettings({ ...draft, apiKey: e.target.value })}
                     type={showApiKey ? 'text' : 'password'}
-                    placeholder="sk-..."
+                    placeholder={draft.hasApiKey ? `已保存：${draft.apiKeyMasked ?? '••••'}` : ((draft.apiProvider ?? DEFAULT_SETTINGS.apiProvider) === 'azure' ? 'Azure OpenAI API Key' : 'sk-...')}
                     className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 pr-10 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                   />
                   <button
@@ -177,7 +209,7 @@ export default function SettingsModal() {
                   </button>
                 </div>
                 <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
-                  支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiKey=</code>
+                  留空表示不修改已保存的 Key。支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiKey=</code>
                 </div>
               </div>
 
@@ -206,23 +238,40 @@ export default function SettingsModal() {
                 </div>
               </label>
 
+              {(draft.apiProvider ?? DEFAULT_SETTINGS.apiProvider) === 'azure' && (
+                <label className="block">
+                  <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Azure API Version</span>
+                  <input
+                    value={draft.azureApiVersion ?? DEFAULT_AZURE_API_VERSION}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, azureApiVersion: e.target.value }))}
+                    onBlur={(e) => commitSettings({ ...draft, azureApiVersion: e.target.value })}
+                    type="text"
+                    placeholder={DEFAULT_AZURE_API_VERSION}
+                    className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                  />
+                  <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                    支持通过查询参数覆盖：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">azureApiVersion=</code>。
+                  </div>
+                </label>
+              )}
+
               <label className="block">
                 <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
-                  模型 ID
+                  {(draft.apiProvider ?? DEFAULT_SETTINGS.apiProvider) === 'azure' ? '部署名称' : '模型 ID'}
                 </span>
                 <input
                   value={draft.model}
                   onChange={(e) => setDraft((prev) => ({ ...prev, model: e.target.value }))}
                   onBlur={(e) => commitSettings({ ...draft, model: e.target.value })}
                   type="text"
-                  placeholder={getDefaultModelForMode(draft.apiMode ?? DEFAULT_SETTINGS.apiMode)}
+                  placeholder={(draft.apiProvider ?? DEFAULT_SETTINGS.apiProvider) === 'azure' ? '你的部署名称' : getDefaultModelForMode(draft.apiMode ?? DEFAULT_SETTINGS.apiMode)}
                   className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                 />
                 <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
                   {(draft.apiMode ?? DEFAULT_SETTINGS.apiMode) === 'responses' ? (
-                    <>Responses API 需要使用支持 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">image_generation</code> 工具的文本模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_RESPONSES_MODEL}</code>。</>
+                    <>{(draft.apiProvider ?? DEFAULT_SETTINGS.apiProvider) === 'azure' ? 'Azure 模式这里填写 Deployment 名称，而不是模型名称。' : <>Responses API 需要使用支持 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">image_generation</code> 工具的文本模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_RESPONSES_MODEL}</code>。</>}</>
                   ) : (
-                    <>Images API 需要使用 GPT Image 模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_IMAGES_MODEL}</code>。</>
+                    <>{(draft.apiProvider ?? DEFAULT_SETTINGS.apiProvider) === 'azure' ? 'Azure 模式这里填写 Deployment 名称，而不是模型名称。' : <>Images API 需要使用 GPT Image 模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_IMAGES_MODEL}</code>。</>}</>
                   )}
                 </div>
               </label>

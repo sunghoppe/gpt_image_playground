@@ -56,7 +56,7 @@ https://cooksleep.github.io/gpt_image_playground
 - **文本生图**：输入提示词，可调用 `images/generations` 或 Responses API 的 `image_generation` 工具生成图片。
 - **参考图编辑**：支持上传最多 16 张参考图，可调用 `images/edits` 或 Responses API 多模态输入进行图片编辑。支持文件选择、粘贴和拖拽三种方式。
 - **遮罩编辑**：支持在参考图上绘制遮罩后进行局部编辑。遮罩主图会按官方接口限制预处理为安全工作图，避免高分辨率图片导致提交失败。需要注意的是，根据官方文档说明，遮罩编辑仍基于提示词引导模型，无法完全控制模型实际编辑区域。
-- **接口模式切换**：支持在设置中选择 Images API (`/v1/images`) 或 Responses API (`/v1/responses`)。
+- **接口模式切换**：支持在设置中选择 OpenAI / Azure OpenAI 提供方，以及 Images API (`/v1/images`) 或 Responses API (`/v1/responses`)。
 - **批量生成**：单次可设置生成多张图片。
 - **Codex CLI 兼容模式**：可在设置中开启 Codex CLI 模式。开启后根据 Codex CLI 中的实际可用能力，将质量参数固定为 `auto` 且不会发送 `quality` 字段；Images API 的多图生成会拆分为多个并发请求完成，解决该 API 数量参数无效的问题；提示词文本开头会加入简短的不改写要求，避免模型重写提示词，偏离原意。
 
@@ -81,7 +81,7 @@ https://cooksleep.github.io/gpt_image_playground
 - **PWA 支持**：支持渐进式 Web 应用（PWA），可将网页作为独立应用安装到桌面或移动设备主屏幕，提供类似原生 App 的沉浸式体验，并适配 iOS PWA 顶部安全区。
 
 ### 💾 本地数据优先
-- **IndexedDB 存储**：所有任务记录与图片数据均存储在浏览器的 IndexedDB 中，数据绝不离开本地。
+- **服务端持久化**：Docker 部署时，设置、任务记录与图片数据会保存到服务端 `/data` 目录，便于跨浏览器同步。
 - **性能优化**：参考图采用内存缓存与延迟存储机制，图片采用 SHA-256 哈希自动去重，并在每次启动时自动清理孤立的图片碎片。
 - **导入与导出**：支持将完整数据打包为 ZIP 导出。导出的 ZIP 内包含原始图片文件（非 base64）和记录图片元数据的 `manifest.json`，方便备份与迁移。
 
@@ -89,10 +89,10 @@ https://cooksleep.github.io/gpt_image_playground
 
 ## 🚀 部署与使用
 
-支持多种部署与使用方式，推荐使用 Vercel 一键部署。
+支持多种部署与使用方式。当前服务端持久化版本推荐使用 Docker 部署。
 
 <details>
-<summary><strong>▲ 方式一：Vercel 一键部署 (推荐)</strong></summary>
+<summary><strong>▲ 方式一：Vercel 一键部署（静态版）</strong></summary>
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FCookSleep%2Fgpt_image_playground&project-name=gpt-image-playground&repository-name=gpt-image-playground)
 
@@ -104,7 +104,7 @@ https://cooksleep.github.io/gpt_image_playground
 VITE_DEFAULT_API_URL=https://api.openai.com/v1
 ```
 
-部署完成后，打开 Vercel 分配的域名，在页面右上角设置中填入 API Key 即可使用。
+注意：当前服务端持久化、登录鉴权和服务端代理能力需要 Node 后端；纯静态 Vercel 部署不适合保存配置/图片到服务器。个人自用推荐使用下方 Docker 部署。
 
 **更新说明：**
 
@@ -118,13 +118,16 @@ VITE_DEFAULT_API_URL=https://api.openai.com/v1
 <details>
 <summary><strong>🐳 方式二：Docker 部署</strong></summary>
 
-项目已将镜像发布至 GitHub Container Registry。你可以通过环境变量 `API_URL` 注入默认的 API 节点。
+Docker 镜像为单容器部署：Node 服务同时托管前端页面和后端 API。设置、参数、任务记录和图片都会保存到服务器端的 `/data` 目录，建议挂载为持久化 volume。
 
 **使用 Docker CLI：**
 
 ```bash
-docker run -d -p 8080:80 \
-  -e API_URL=https://api.openai.com/v1 \
+docker run -d -p 8080:3000 \
+  -e APP_LOGIN_KEY=你的登录密钥 \
+  -e APP_SECRET=一串很长的随机加密密钥 \
+  -e DATA_DIR=/data \
+  -v ./data:/data \
   ghcr.io/cooksleep/gpt_image_playground:latest
 ```
 
@@ -135,15 +138,19 @@ services:
   gpt-image-playground:
     image: ghcr.io/cooksleep/gpt_image_playground:latest
     environment:
-      - API_URL=https://api.openai.com/v1
+      APP_LOGIN_KEY: 你的登录密钥
+      APP_SECRET: 一串很长的随机加密密钥
+      DATA_DIR: /data
+    volumes:
+      - ./data:/data
     ports:
-      - "8080:80"
+      - "8080:3000"
     restart: unless-stopped
 ```
 
-浏览器访问 `http://localhost:8080`，在页面右上角设置中填入 API Key 即可使用。
+浏览器访问 `http://localhost:8080`，输入 `APP_LOGIN_KEY` 登录后即可使用。API Key 会使用 `APP_SECRET` 加密后保存到服务端数据文件中，页面只显示脱敏值；如果输入框留空，表示不修改已保存的 API Key。
 
-*(注：官方镜像同时提供带版本号的标签，如 `0.1.11` 或 `0.1`)*
+> 请妥善保存 `APP_SECRET`。如果更换该值，已经加密保存的 API Key 将无法解密，需要在页面中重新填写。
 
 **更新说明：**
 
@@ -234,16 +241,20 @@ docker compose up -d
 
 点击页面右上角的设置图标，你可以随时更改 API 相关的配置。
 
-- **Images API**：调用 `/v1/images/generations` 和 `/v1/images/edits`，模型需要填写 GPT Image 模型，例如 `gpt-image-2`。
-- **Responses API**：调用 `/v1/responses` 并使用 `image_generation` 工具，模型需要填写支持该工具的文本模型，例如 `gpt-5.5`。
+- **OpenAI 模式**：`API URL` 默认使用 `https://api.openai.com/v1`；Images API 调用 `/v1/images/generations` 和 `/v1/images/edits`，模型需要填写 GPT Image 模型，例如 `gpt-image-2`。
+- **Azure OpenAI 模式**：`Azure 资源 URL` 填写资源根地址，例如 `https://你的资源名.openai.azure.com`；`部署名称` 填写 Azure Portal 中的 Deployment 名称；请求由服务端使用 `api-key` 请求头代发，并拼接 `/openai/deployments/{deployment}/...?...api-version=...`。
+- **Responses API**：OpenAI 模式调用 `/v1/responses`，Azure OpenAI 模式调用对应 deployment 下的 `responses` 路径，并使用 `image_generation` 工具。OpenAI 模式下模型需要填写支持该工具的文本模型，例如 `gpt-5.5`；Azure OpenAI 模式下仍填写部署名称。
+- **API Key 存储**：API Key 使用 `APP_SECRET` 加密保存到服务端，前端只显示脱敏值；留空保存不会覆盖已保存的 Key。
 - **Codex CLI 模式**：如果你在使用源于 Codex CLI 的 API，可以在 `API URL` 右侧开启该模式。开启后应用不会向任何接口发送 `quality` 参数，界面中的质量选项也会固定为 `auto`；同时会在提示词文本开头加入简短的不改写要求，避免模型重写提示词，偏离原意。
 - Codex CLI 模式下，Images API 的图片数量会通过并发发起多个单图请求实现；Responses API 原本也通过并发请求实现多图生成。
 - 如果检测到接口返回的提示词被改写，应用会提示是否为当前 `API URL + API Key` 组合开启 Codex CLI 模式；取消后，同一组合不再重复询问。
 
 应用支持通过 URL 查询参数快速填充配置，非常适合书签或分享给他人使用：
-- `?apiUrl=https://你的代理地址.com`
-- `?apiKey=sk-xxxx`
+- `?apiProvider=openai` 或 `?apiProvider=azure`，未传时默认使用 `openai`
+- `?apiUrl=https://你的代理地址.com`，Azure OpenAI 模式下填写资源根地址
+- `?apiKey=sk-xxxx`，Azure OpenAI 模式下填写 Azure OpenAI API Key
 - `?apiMode=images` 或 `?apiMode=responses`，未传时默认使用 `images`
+- `?azureApiVersion=2025-04-01-preview`，仅 Azure OpenAI 模式使用
 - `?codexCli=true` 或 `?codexCli=false`，未传时默认关闭，仅 `true` 会开启 Codex CLI 模式
 
 例如：
@@ -264,7 +275,7 @@ docker compose up -d
 - **构建工具**：[Vite](https://vite.dev/)
 - **样式**：[Tailwind CSS 3](https://tailwindcss.com/)
 - **状态管理**：[Zustand](https://zustand.docs.pmnd.rs/)
-- **数据存储**：浏览器的 IndexedDB API
+- **数据存储**：服务端 JSON 数据文件 + Docker volume；浏览器端仅保留运行时内存状态
 
 ## 📄 许可证
 

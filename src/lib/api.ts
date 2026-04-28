@@ -1,6 +1,6 @@
 import type { AppSettings, ImageApiResponse, ResponsesApiResponse, TaskParams } from '../types'
 import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
-import { buildApiUrl, readClientDevProxyConfig } from './devProxy'
+import { readClientDevProxyConfig } from './devProxy'
 
 const MIME_MAP: Record<string, string> = {
   png: 'image/png',
@@ -11,7 +11,7 @@ const MIME_MAP: Record<string, string> = {
 const MAX_MASK_EDIT_FILE_BYTES = 50 * 1024 * 1024
 const MAX_IMAGE_INPUT_PAYLOAD_BYTES = 512 * 1024 * 1024
 
-export { normalizeBaseUrl } from './devProxy'
+export { normalizeAzureResourceUrl, normalizeBaseUrl } from './devProxy'
 
 function isHttpUrl(value: unknown): value is string {
   return typeof value === 'string' && /^https?:\/\//i.test(value)
@@ -97,12 +97,15 @@ async function getApiErrorMessage(response: Response): Promise<string> {
   return errorMsg
 }
 
-function createRequestHeaders(settings: AppSettings): Record<string, string> {
+function createRequestHeaders(_settings: AppSettings): Record<string, string> {
   return {
-    Authorization: `Bearer ${settings.apiKey}`,
     'Cache-Control': 'no-store, no-cache, max-age=0',
     Pragma: 'no-cache',
   }
+}
+
+function buildConfiguredApiUrl(_settings: AppSettings, path: string, _proxyConfig: ReturnType<typeof readClientDevProxyConfig>): string {
+  return `/api/openai/${path.replace(/^\/+/, '')}`
 }
 
 function createResponsesImageTool(
@@ -293,7 +296,9 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
 
     if (isEdit) {
       const formData = new FormData()
-      formData.append('model', settings.model)
+      if (settings.apiProvider !== 'azure') {
+        formData.append('model', settings.model)
+      }
       formData.append('prompt', prompt)
       formData.append('size', params.size)
       formData.append('output_format', params.output_format)
@@ -338,7 +343,7 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
         formData.append('mask', maskBlob, 'mask.png')
       }
 
-      response = await fetch(buildApiUrl(settings.baseUrl, 'images/edits', proxyConfig), {
+      response = await fetch(buildConfiguredApiUrl(settings, 'images/edits', proxyConfig), {
         method: 'POST',
         headers: requestHeaders,
         cache: 'no-store',
@@ -347,7 +352,7 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
       })
     } else {
       const body: Record<string, unknown> = {
-        model: settings.model,
+        ...(settings.apiProvider === 'azure' ? {} : { model: settings.model }),
         prompt,
         size: params.size,
         output_format: params.output_format,
@@ -365,7 +370,7 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
         body.n = params.n
       }
 
-      response = await fetch(buildApiUrl(settings.baseUrl, 'images/generations', proxyConfig), {
+      response = await fetch(buildConfiguredApiUrl(settings, 'images/generations', proxyConfig), {
         method: 'POST',
         headers: {
           ...requestHeaders,
@@ -474,13 +479,13 @@ async function callResponsesImageApiSingle(opts: CallApiOptions): Promise<CallAp
     )
 
     const body = {
-      model: settings.model,
+      ...(settings.apiProvider === 'azure' ? {} : { model: settings.model }),
       input: createResponsesInput(prompt, inputImageDataUrls),
       tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, settings, opts.maskDataUrl)],
       tool_choice: 'required',
     }
 
-    const response = await fetch(buildApiUrl(settings.baseUrl, 'responses', proxyConfig), {
+    const response = await fetch(buildConfiguredApiUrl(settings, 'responses', proxyConfig), {
       method: 'POST',
       headers: {
         ...requestHeaders,

@@ -1,24 +1,32 @@
 // ===== 设置 =====
 
 export type ApiMode = 'images' | 'responses'
+export type ApiProvider = 'openai' | 'azure'
 
 export interface AppSettings {
+  apiProvider: ApiProvider
   baseUrl: string
   apiKey: string
+  apiKeyMasked?: string
+  hasApiKey?: boolean
   model: string
+  azureApiVersion: string
   timeout: number
   apiMode: ApiMode
   codexCli: boolean
 }
 
 const DEFAULT_BASE_URL = import.meta.env.VITE_DEFAULT_API_URL?.trim() || 'https://api.openai.com/v1'
+export const DEFAULT_AZURE_API_VERSION = '2025-04-01-preview'
 export const DEFAULT_IMAGES_MODEL = 'gpt-image-2'
 export const DEFAULT_RESPONSES_MODEL = 'gpt-5.5'
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  apiProvider: 'openai',
   baseUrl: DEFAULT_BASE_URL,
   apiKey: '',
   model: DEFAULT_IMAGES_MODEL,
+  azureApiVersion: DEFAULT_AZURE_API_VERSION,
   timeout: 300,
   apiMode: 'images',
   codexCli: false,
@@ -47,7 +55,7 @@ export const DEFAULT_PARAMS: TaskParams = {
 // ===== 输入图片（UI 层面） =====
 
 export interface InputImage {
-  /** IndexedDB image store 的 id（SHA-256 hash） */
+  /** image store 的 id（SHA-256 hash） */
   id: string
   /** data URL，用于预览 */
   dataUrl: string
@@ -89,7 +97,7 @@ export interface TaskRecord {
   isFavorite?: boolean
 }
 
-// ===== IndexedDB 存储的图片 =====
+// ===== 存储的图片 =====
 
 export interface StoredImage {
   id: string

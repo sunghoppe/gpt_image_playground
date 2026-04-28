@@ -12,13 +12,19 @@ COPY . .
 RUN npm run build
 
 # ---- Production stage ----
-FROM nginx:alpine
+FROM node:20-alpine
 
-COPY --from=build /app/dist /usr/share/nginx/html
-COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
-COPY deploy/inject-api-url.sh /docker-entrypoint.d/40-inject-api-url.sh
-RUN chmod +x /docker-entrypoint.d/40-inject-api-url.sh
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV DATA_DIR=/data
+ENV PUBLIC_DIR=/app/dist
 
-EXPOSE 80
+COPY --from=build /app/dist ./dist
+COPY server ./server
+COPY package.json ./package.json
 
-CMD ["nginx", "-g", "daemon off;"]
+VOLUME ["/data"]
+EXPOSE 3000
+
+CMD ["node", "server/server.mjs"]
