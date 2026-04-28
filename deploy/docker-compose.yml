@@ -1,0 +1,22 @@
+services:
+  gpt-image-playground:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: gpt-image-playground:local
+    container_name: gpt-image-playground
+    environment:
+      APP_LOGIN_KEY: ${APP_LOGIN_KEY:-change-me}
+      APP_SECRET: ${APP_SECRET:-change-me-to-a-long-random-secret}
+      DATA_DIR: /data
+    volumes:
+      - ./data:/data
+    ports:
+      - "8080:3000"
+    restart: unless-stopped
+    networks:
+      - chat2Api
+
+networks:
+  chat2Api:
+    external: true
