@@ -12,12 +12,17 @@ export default function TaskGrid() {
   const selectedTaskIds = useStore((s) => s.selectedTaskIds)
   const setSelectedTaskIds = useStore((s) => s.setSelectedTaskIds)
   const clearSelection = useStore((s) => s.clearSelection)
+  const tasksNextOffset = useStore((s) => s.tasksNextOffset)
+  const tasksLoadingMore = useStore((s) => s.tasksLoadingMore)
+  const loadMoreTasks = useStore((s) => s.loadMoreTasks)
+  const reloadTasks = useStore((s) => s.reloadTasks)
   const hasOverlayOpen = useStore((s) =>
     Boolean(s.detailTaskId || s.lightboxImageId || s.maskEditorImageId || s.showSettings || s.confirmDialog),
   )
 
   const rootRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
+  const loadMoreRef = useRef<HTMLDivElement>(null)
   const [selectionBox, setSelectionBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const isDragging = useRef(false)
   const dragStart = useRef<{ x: number; y: number } | null>(null)
@@ -164,6 +169,27 @@ export default function TaskGrid() {
     }
   }, [clearSelection, hasOverlayOpen, isMac])
 
+
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void reloadTasks()
+    }, 250)
+    return () => window.clearTimeout(timeoutId)
+  }, [searchQuery, filterStatus, filterFavorite, reloadTasks])
+
+  useEffect(() => {
+    const target = loadMoreRef.current
+    if (!target || tasksNextOffset == null) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        void loadMoreTasks()
+      }
+    }, { rootMargin: '600px 0px' })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [loadMoreTasks, tasksNextOffset])
+
   if (!filteredTasks.length) {
     return (
       <div className="text-center py-20 text-gray-400 dark:text-gray-500">
@@ -225,6 +251,20 @@ export default function TaskGrid() {
             />
           </div>
         ))}
+      </div>
+      <div ref={loadMoreRef} className="flex justify-center pb-8 pt-2">
+        {tasksNextOffset != null ? (
+          <button
+            type="button"
+            onClick={() => void loadMoreTasks()}
+            disabled={tasksLoadingMore}
+            className="rounded-full border border-gray-200 bg-white/70 px-4 py-2 text-xs text-gray-500 shadow-sm transition hover:border-blue-200 hover:text-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400"
+          >
+            {tasksLoadingMore ? '加载中…' : '加载更多'}
+          </button>
+        ) : (
+          <span className="text-xs text-gray-300 dark:text-gray-600">已加载全部记录</span>
+        )}
       </div>
       {selectionBox && (
         <div

@@ -211,6 +211,14 @@ async function handleApi(req, res, url) {
   }
 
   if (url.pathname === '/api/tasks' && req.method === 'GET') {
+    const limit = url.searchParams.get('limit')
+    const offset = url.searchParams.get('offset')
+    const q = url.searchParams.get('q') || ''
+    const status = url.searchParams.get('status') || 'all'
+    const favorite = url.searchParams.get('favorite') === 'true'
+    if (limit !== null || offset !== null || q || status !== 'all' || favorite) {
+      return sendJson(res, 200, await store.getPagedTasks({ limit, offset, q, status, favorite }))
+    }
     return sendJson(res, 200, await store.getAllTasks())
   }
 
@@ -241,11 +249,25 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { ok: true })
   }
 
+  const imageContentMatch = url.pathname.match(/^\/api\/images\/([^/]+)\/content$/)
+  if (imageContentMatch && req.method === 'GET') {
+    const content = await store.getImageContent(decodeURIComponent(imageContentMatch[1]))
+    if (!content) return sendError(res, 404, '图片不存在')
+    res.writeHead(200, {
+      'Content-Type': content.mime,
+      'Content-Length': content.size,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    })
+    res.end(content.bytes)
+    return
+  }
+
   const imageMatch = url.pathname.match(/^\/api\/images\/([^/]+)$/)
   if (imageMatch && req.method === 'GET') {
     const image = await store.getImage(decodeURIComponent(imageMatch[1]))
     if (!image) return sendError(res, 404, '图片不存在')
-    return sendJson(res, 200, image)
+    const { dataUrl, ...publicImage } = image
+    return sendJson(res, 200, publicImage)
   }
 
   if (imageMatch && req.method === 'PUT') {

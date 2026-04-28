@@ -40,9 +40,14 @@ export function getCachedImage(id: string): string | undefined {
 export async function ensureImageCached(id: string): Promise<string | undefined> {
   if (imageCache.has(id)) return imageCache.get(id)
   const rec = await getImage(id)
-  if (rec) {
+  if (rec?.dataUrl) {
     imageCache.set(id, rec.dataUrl)
     return rec.dataUrl
+  }
+  if (rec) {
+    const url = `/api/images/${encodeURIComponent(id)}/content`
+    imageCache.set(id, url)
+    return url
   }
   return undefined
 }
@@ -77,6 +82,10 @@ interface AppState {
   // 任务列表
   tasks: TaskRecord[]
   setTasks: (t: TaskRecord[]) => void
+  tasksNextOffset: number | null
+  tasksLoadingMore: boolean
+  loadMoreTasks: () => Promise<void>
+  reloadTasks: () => Promise<void>
 
   // 搜索和筛选
   searchQuery: string
@@ -198,6 +207,41 @@ export const useStore = create<AppState>()(
       // Tasks
       tasks: [],
       setTasks: (tasks) => set({ tasks }),
+      tasksNextOffset: null,
+      tasksLoadingMore: false,
+      reloadTasks: async () => {
+        const state = get()
+        const params = new URLSearchParams({ limit: '50', offset: '0' })
+        if (state.searchQuery.trim()) params.set('q', state.searchQuery.trim())
+        if (state.filterStatus !== 'all') params.set('status', state.filterStatus)
+        if (state.filterFavorite) params.set('favorite', 'true')
+        try {
+          const result = await apiGet<{ items: TaskRecord[]; nextOffset: number | null }>(`/api/tasks?${params}`)
+          set({ tasks: result.items, tasksNextOffset: result.nextOffset })
+        } catch (error) {
+          get().showToast(`刷新任务失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+        }
+      },
+      loadMoreTasks: async () => {
+        const state = get()
+        if (state.tasksLoadingMore || state.tasksNextOffset == null) return
+        set({ tasksLoadingMore: true })
+        try {
+          const params = new URLSearchParams({ limit: '50', offset: String(state.tasksNextOffset) })
+          if (state.searchQuery.trim()) params.set('q', state.searchQuery.trim())
+          if (state.filterStatus !== 'all') params.set('status', state.filterStatus)
+          if (state.filterFavorite) params.set('favorite', 'true')
+          const result = await apiGet<{ items: TaskRecord[]; nextOffset: number | null }>(`/api/tasks?${params}`)
+          set((current) => {
+            const existingIds = new Set(current.tasks.map((task) => task.id))
+            const nextTasks = [...current.tasks, ...result.items.filter((task) => !existingIds.has(task.id))]
+            return { tasks: nextTasks, tasksNextOffset: result.nextOffset, tasksLoadingMore: false }
+          })
+        } catch (error) {
+          set({ tasksLoadingMore: false })
+          get().showToast(`加载更多失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+        }
+      },
 
       // Search & Filter
       searchQuery: '',
@@ -281,11 +325,12 @@ export function showCodexCliPrompt(force = false, reason = '接口返回的提�
 
 /** 初始化：从服务端加载任务和图片缓存，清理孤立图片 */
 export async function initStore() {
-  const bootstrap = await apiGet<{ settings: AppSettings; params: TaskParams; tasks: TaskRecord[]; dismissedCodexCliPrompts: string[] }>('/api/bootstrap')
+  const bootstrap = await apiGet<{ settings: AppSettings; params: TaskParams; tasks: TaskRecord[]; tasksNextOffset?: number | null; dismissedCodexCliPrompts: string[] }>('/api/bootstrap')
   useStore.setState({
     settings: { ...DEFAULT_SETTINGS, ...bootstrap.settings },
     params: { ...DEFAULT_PARAMS, ...bootstrap.params },
     dismissedCodexCliPrompts: bootstrap.dismissedCodexCliPrompts ?? [],
+    tasksNextOffset: bootstrap.tasksNextOffset ?? (bootstrap.tasks.length >= 50 ? 50 : null),
   })
   const tasks = bootstrap.tasks
   useStore.getState().setTasks(tasks)
@@ -301,9 +346,7 @@ export async function initStore() {
   // 预加载所有图片到缓存，同时清理孤立图片
   const images = await getAllImages()
   for (const img of images) {
-    if (referencedIds.has(img.id)) {
-      imageCache.set(img.id, img.dataUrl)
-    } else {
+    if (!referencedIds.has(img.id)) {
       await deleteImage(img.id)
     }
   }
@@ -661,6 +704,16 @@ function dataUrlToBytes(dataUrl: string): { ext: string; bytes: Uint8Array } {
   return { ext, bytes }
 }
 
+
+async function imageSourceToBytes(source: string): Promise<{ ext: string; bytes: Uint8Array }> {
+  if (source.startsWith('data:')) return dataUrlToBytes(source)
+  const response = await fetch(source, { cache: 'no-store' })
+  if (!response.ok) throw new Error(`图片下载失败：HTTP ${response.status}`)
+  const contentType = response.headers.get('content-type') || 'image/png'
+  const ext = contentType.includes('jpeg') ? 'jpg' : contentType.includes('webp') ? 'webp' : contentType.includes('gif') ? 'gif' : 'png'
+  return { ext, bytes: new Uint8Array(await response.arrayBuffer()) }
+}
+
 /** 将二进制数据还原为 dataUrl */
 function bytesToDataUrl(bytes: Uint8Array, filePath: string): string {
   const ext = filePath.split('.').pop()?.toLowerCase() ?? 'png'
@@ -697,7 +750,9 @@ export async function exportData() {
     const zipFiles: Record<string, Uint8Array | [Uint8Array, { mtime: Date }]> = {}
 
     for (const img of images) {
-      const { ext, bytes } = dataUrlToBytes(img.dataUrl)
+      const source = img.dataUrl ?? await ensureImageCached(img.id)
+      if (!source) continue
+      const { ext, bytes } = await imageSourceToBytes(source)
       const path = `images/${img.id}.${ext}`
       const createdAt = img.createdAt ?? imageCreatedAtFallback.get(img.id) ?? exportedAt
       imageFiles[img.id] = { path, createdAt, source: img.source }

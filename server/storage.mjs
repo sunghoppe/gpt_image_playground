@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const DEFAULT_SETTINGS = {
   apiProvider: 'openai',
@@ -21,6 +21,36 @@ const DEFAULT_PARAMS = {
   output_compression: null,
   moderation: 'auto',
   n: 1,
+}
+
+
+const DATA_URL_RE = /^data:([^;,]+)?(;base64)?,(.*)$/s
+const EXT_BY_MIME = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+}
+
+function parseDataUrl(dataUrl) {
+  const match = DATA_URL_RE.exec(dataUrl || '')
+  if (!match) throw new Error('无效的 data URL')
+  const mime = match[1] || 'application/octet-stream'
+  const isBase64 = Boolean(match[2])
+  const payload = match[3] || ''
+  const bytes = isBase64 ? Buffer.from(payload, 'base64') : Buffer.from(decodeURIComponent(payload), 'utf8')
+  return { mime, bytes, ext: EXT_BY_MIME[mime] || 'bin' }
+}
+
+function getImageRelativePath(id, ext) {
+  const safeId = String(id).replace(/[^a-zA-Z0-9._-]/g, '_')
+  return join('images', safeId.slice(0, 2) || 'xx', safeId.slice(2, 4) || 'xx', `${safeId}.${ext}`)
+}
+
+function toPublicImage(image) {
+  if (!image) return image
+  const { dataUrl, ...publicImage } = image
+  return publicImage
 }
 
 function createEmptyState() {
@@ -80,6 +110,7 @@ function normalizeState(input) {
 export async function createDataStore({ dataDir, secret }) {
   const statePath = join(dataDir, 'state.json')
   await mkdir(dataDir, { recursive: true })
+  await mkdir(join(dataDir, 'images'), { recursive: true })
 
   async function readRawState() {
     if (!existsSync(statePath)) return createEmptyState()
@@ -136,10 +167,12 @@ export async function createDataStore({ dataDir, secret }) {
 
   async function getBootstrap() {
     const state = await readRawState()
+    const firstPage = await getPagedTasks({ limit: 50 })
     return {
       settings: await getPublicSettings(),
       params: state.params,
-      tasks: state.tasks,
+      tasks: firstPage.items,
+      tasksNextOffset: firstPage.nextOffset,
       dismissedCodexCliPrompts: state.dismissedCodexCliPrompts,
     }
   }
@@ -153,6 +186,27 @@ export async function createDataStore({ dataDir, secret }) {
 
   async function getAllTasks() {
     return (await readRawState()).tasks
+  }
+
+  async function getPagedTasks({ limit = 50, offset = 0, q = '', status = 'all', favorite = false } = {}) {
+    const normalizedLimit = Math.max(1, Math.min(200, Number(limit) || 50))
+    const normalizedOffset = Math.max(0, Number(offset) || 0)
+    const query = String(q || '').trim().toLowerCase()
+    const tasks = (await readRawState()).tasks
+      .slice()
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+      .filter((task) => {
+        if (status && status !== 'all' && task.status !== status) return false
+        if (favorite && !task.isFavorite) return false
+        if (!query) return true
+        const searchText = `${task.prompt || ''} ${JSON.stringify(task.params || {})}`.toLowerCase()
+        return searchText.includes(query)
+      })
+    return {
+      items: tasks.slice(normalizedOffset, normalizedOffset + normalizedLimit),
+      total: tasks.length,
+      nextOffset: normalizedOffset + normalizedLimit < tasks.length ? normalizedOffset + normalizedLimit : null,
+    }
   }
 
   async function putTask(task) {
@@ -179,17 +233,54 @@ export async function createDataStore({ dataDir, secret }) {
     })
   }
 
+  async function materializeImage(image) {
+    if (!image) return undefined
+    if (image.dataUrl && !image.filePath) {
+      await putImage(image)
+      return (await readRawState()).images[image.id]
+    }
+    return image
+  }
+
   async function getImage(id) {
-    return (await readRawState()).images[id]
+    return materializeImage((await readRawState()).images[id])
+  }
+
+  async function getImageContent(id) {
+    const image = await getImage(id)
+    if (!image) return undefined
+    if (image.dataUrl) {
+      const parsed = parseDataUrl(image.dataUrl)
+      return { ...parsed, size: parsed.bytes.length }
+    }
+    const bytes = await readFile(join(dataDir, image.filePath))
+    return { bytes, mime: image.mime || 'application/octet-stream', ext: image.ext || 'bin', size: bytes.length }
   }
 
   async function getAllImages() {
-    return Object.values((await readRawState()).images)
+    const images = Object.values((await readRawState()).images)
+    return images.map(toPublicImage)
   }
 
   async function putImage(image) {
+    const { mime, bytes, ext } = parseDataUrl(image.dataUrl)
+    const filePath = getImageRelativePath(image.id, ext)
+    const absolutePath = join(dataDir, filePath)
+    await mkdir(dirname(absolutePath), { recursive: true })
+    await writeFile(absolutePath, bytes)
+
+    const storedImage = {
+      id: image.id,
+      mime,
+      ext,
+      sizeBytes: bytes.length,
+      filePath,
+      createdAt: image.createdAt || Date.now(),
+      source: image.source,
+    }
+
     await update((state) => {
-      state.images[image.id] = image
+      state.images[image.id] = storedImage
       return state
     })
     return image.id
@@ -225,10 +316,12 @@ export async function createDataStore({ dataDir, secret }) {
     getBootstrap,
     updateParams,
     getAllTasks,
+    getPagedTasks,
     putTask,
     deleteTask,
     clearTasks,
     getImage,
+    getImageContent,
     getAllImages,
     putImage,
     deleteImage,

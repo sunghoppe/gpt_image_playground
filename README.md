@@ -118,7 +118,7 @@ VITE_DEFAULT_API_URL=https://api.openai.com/v1
 <details>
 <summary><strong>🐳 方式二：Docker 部署</strong></summary>
 
-Docker 镜像为单容器部署：Node 服务同时托管前端页面和后端 API。设置、参数、任务记录和图片都会保存到服务器端的 `/data` 目录，建议挂载为持久化 volume。
+Docker 镜像为单容器部署：Node 服务同时托管前端页面和后端 API。设置、参数、任务记录会保存到 `/data/state.json`，图片会保存到 `/data/images/` 文件目录，建议挂载为持久化 volume。
 
 **使用 Docker CLI：**
 
@@ -275,7 +275,7 @@ docker compose up -d
 - **构建工具**：[Vite](https://vite.dev/)
 - **样式**：[Tailwind CSS 3](https://tailwindcss.com/)
 - **状态管理**：[Zustand](https://zustand.docs.pmnd.rs/)
-- **数据存储**：服务端 JSON 数据文件 + Docker volume；浏览器端仅保留运行时内存状态
+- **数据存储**：服务端 JSON 元数据 + 图片文件目录 + Docker volume；浏览器端仅保留运行时内存状态
 
 ## 📄 许可证
 
