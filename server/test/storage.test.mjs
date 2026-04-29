@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createDataStore, maskSecret } from '../storage.mjs'
@@ -37,6 +37,78 @@ test('settings API stores apiKey encrypted and returns only masked key', async (
     const raw = await store.readRawState()
     assert.equal(raw.settings.apiKey, undefined)
     assert.notEqual(raw.secrets.apiKeyCiphertext, 'secret-api-key-1234')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+
+async function exists(path) {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+test('deleteImage removes image metadata and file from disk', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gpt-image-store-'))
+  try {
+    const store = await createDataStore({ dataDir: dir, secret: 'test-secret' })
+    await store.putImage({ id: 'image-delete-test', dataUrl: 'data:image/png;base64,aGVsbG8=', source: 'generated' })
+    const image = await store.getImage('image-delete-test')
+    const filePath = join(dir, image.filePath)
+    assert.equal(await exists(filePath), true)
+
+    await store.deleteImage('image-delete-test')
+
+    assert.equal(await store.getImage('image-delete-test'), undefined)
+    assert.equal(await exists(filePath), false)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('clearImages removes all image files from disk', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gpt-image-store-'))
+  try {
+    const store = await createDataStore({ dataDir: dir, secret: 'test-secret' })
+    await store.putImage({ id: 'image-clear-a', dataUrl: 'data:image/png;base64,YQ==', source: 'generated' })
+    await store.putImage({ id: 'image-clear-b', dataUrl: 'data:image/png;base64,Yg==', source: 'generated' })
+    const imageA = await store.getImage('image-clear-a')
+    const imageB = await store.getImage('image-clear-b')
+    const fileA = join(dir, imageA.filePath)
+    const fileB = join(dir, imageB.filePath)
+    assert.equal(await exists(fileA), true)
+    assert.equal(await exists(fileB), true)
+
+    await store.clearImages()
+
+    assert.deepEqual(await store.getAllImages(), [])
+    assert.equal(await exists(fileA), false)
+    assert.equal(await exists(fileB), false)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+
+test('concurrent image writes do not conflict on state temp file', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gpt-image-store-'))
+  try {
+    const store = await createDataStore({ dataDir: dir, secret: 'test-secret' })
+    await Promise.all(
+      Array.from({ length: 20 }).map((_, index) =>
+        store.putImage({
+          id: `concurrent-image-${index}`,
+          dataUrl: `data:image/png;base64,${Buffer.from(`image-${index}`).toString('base64')}`,
+          source: 'generated',
+        }),
+      ),
+    )
+    const images = await store.getAllImages()
+    assert.equal(images.length, 20)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

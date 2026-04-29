@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
@@ -109,6 +109,7 @@ function normalizeState(input) {
 
 export async function createDataStore({ dataDir, secret }) {
   const statePath = join(dataDir, 'state.json')
+  let writeQueue = Promise.resolve()
   await mkdir(dataDir, { recursive: true })
   await mkdir(join(dataDir, 'images'), { recursive: true })
 
@@ -120,16 +121,24 @@ export async function createDataStore({ dataDir, secret }) {
 
   async function writeRawState(state) {
     const normalized = normalizeState(state)
-    const tempPath = `${statePath}.tmp`
+    const tempPath = `${statePath}.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}.tmp`
     await writeFile(tempPath, JSON.stringify(normalized, null, 2), 'utf8')
     await rename(tempPath, statePath)
     return normalized
   }
 
+  async function withWriteLock(fn) {
+    const run = writeQueue.then(fn, fn)
+    writeQueue = run.catch(() => undefined)
+    return run
+  }
+
   async function update(mutator) {
-    const state = await readRawState()
-    const nextState = await mutator(state)
-    return writeRawState(nextState || state)
+    return withWriteLock(async () => {
+      const state = await readRawState()
+      const nextState = await mutator(state)
+      return writeRawState(nextState || state)
+    })
   }
 
   async function getPrivateSettings() {
@@ -287,13 +296,20 @@ export async function createDataStore({ dataDir, secret }) {
   }
 
   async function deleteImage(id) {
-    return update((state) => {
+    return withWriteLock(async () => {
+      const state = await readRawState()
+      const image = state.images[id]
+      if (image?.filePath) {
+        await rm(join(dataDir, image.filePath), { force: true })
+      }
       delete state.images[id]
-      return state
+      return writeRawState(state)
     })
   }
 
   async function clearImages() {
+    await rm(join(dataDir, 'images'), { recursive: true, force: true })
+    await mkdir(join(dataDir, 'images'), { recursive: true })
     return update((state) => {
       state.images = {}
       return state
