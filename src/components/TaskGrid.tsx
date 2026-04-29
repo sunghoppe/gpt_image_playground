@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { useStore, reuseConfig, editOutputs, removeTask } from '../store'
+import { useStore, reuseConfig, editOutputs, removeTask, hasBlockingOverlayOpen } from '../store'
 import TaskCard from './TaskCard'
 
 export default function TaskGrid() {
@@ -16,9 +16,6 @@ export default function TaskGrid() {
   const tasksLoadingMore = useStore((s) => s.tasksLoadingMore)
   const loadMoreTasks = useStore((s) => s.loadMoreTasks)
   const reloadTasks = useStore((s) => s.reloadTasks)
-  const hasOverlayOpen = useStore((s) =>
-    Boolean(s.detailTaskId || s.lightboxImageId || s.maskEditorImageId || s.showSettings || s.confirmDialog),
-  )
 
   const rootRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
@@ -112,7 +109,7 @@ export default function TaskGrid() {
 
   useEffect(() => {
     const handleDocumentMouseDown = (e: MouseEvent) => {
-      if (hasOverlayOpen) return
+      if (hasBlockingOverlayOpen(useStore.getState())) return
       if (e.button !== 0) return
       const target = e.target as HTMLElement | null
       if (!target) return
@@ -167,7 +164,7 @@ export default function TaskGrid() {
       document.removeEventListener('mousemove', handleDocumentMouseMove)
       document.removeEventListener('mouseup', handleDocumentMouseUp)
     }
-  }, [clearSelection, hasOverlayOpen, isMac])
+  }, [clearSelection, isMac])
 
 
 

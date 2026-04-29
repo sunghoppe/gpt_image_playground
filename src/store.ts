@@ -127,6 +127,21 @@ interface AppState {
   setConfirmDialog: (d: AppState['confirmDialog']) => void
 }
 
+type BlockingOverlayState = Pick<
+  AppState,
+  'detailTaskId' | 'lightboxImageId' | 'maskEditorImageId' | 'showSettings' | 'confirmDialog'
+>
+
+export function hasBlockingOverlayOpen(state: BlockingOverlayState): boolean {
+  return Boolean(
+    state.detailTaskId ||
+      state.lightboxImageId ||
+      state.maskEditorImageId ||
+      state.showSettings ||
+      state.confirmDialog,
+  )
+}
+
 export const useStore = create<AppState>()(
     (set, get) => ({
       // Settings
@@ -431,7 +446,7 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
   }
 
   const latestTasks = useStore.getState().tasks
-  useStore.getState().setTasks([task, ...latestTasks])
+  useStore.setState({ prompt: '', tasks: [task, ...latestTasks] })
   await putTask(task)
 
   // 异步调用 API

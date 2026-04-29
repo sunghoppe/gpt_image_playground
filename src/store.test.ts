@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS, DEFAULT_SETTINGS } from './types'
 import type { TaskRecord } from './types'
-import { editOutputs, submitTask, useStore } from './store'
+import { editOutputs, hasBlockingOverlayOpen, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 
@@ -72,5 +72,36 @@ describe('mask draft lifecycle in store actions', () => {
     await submitTask()
 
     expect(useStore.getState().maskDraft).toBeNull()
+  })
+
+  it('clears the prompt after creating a submitted task', async () => {
+    useStore.setState({ prompt: '  a cat wearing sunglasses  ' })
+
+    await submitTask()
+
+    expect(useStore.getState().tasks[0].prompt).toBe('a cat wearing sunglasses')
+    expect(useStore.getState().prompt).toBe('')
+  })
+})
+
+describe('blocking overlay detection', () => {
+  it('treats settings modal as a blocking overlay', () => {
+    expect(hasBlockingOverlayOpen({
+      detailTaskId: null,
+      lightboxImageId: null,
+      maskEditorImageId: null,
+      showSettings: true,
+      confirmDialog: null,
+    })).toBe(true)
+  })
+
+  it('does not block when no overlay is open', () => {
+    expect(hasBlockingOverlayOpen({
+      detailTaskId: null,
+      lightboxImageId: null,
+      maskEditorImageId: null,
+      showSettings: false,
+      confirmDialog: null,
+    })).toBe(false)
   })
 })
