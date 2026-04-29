@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS, DEFAULT_SETTINGS } from './types'
 import type { TaskRecord } from './types'
-import { editOutputs, hasBlockingOverlayOpen, submitTask, useStore } from './store'
+import { editOutputs, hasBlockingOverlayOpen, isDataUrl, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 
@@ -103,5 +103,15 @@ describe('blocking overlay detection', () => {
       showSettings: false,
       confirmDialog: null,
     })).toBe(false)
+  })
+})
+
+describe('image input URL detection', () => {
+  it('identifies data URLs that can be stored directly', () => {
+    expect(isDataUrl('data:image/png;base64,aGVsbG8=')).toBe(true)
+  })
+
+  it('does not treat server image content URLs as data URLs', () => {
+    expect(isDataUrl('/api/images/fallback-854ac47f6f99ac7f/content')).toBe(false)
   })
 })

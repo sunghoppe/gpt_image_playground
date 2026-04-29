@@ -142,6 +142,10 @@ export function hasBlockingOverlayOpen(state: BlockingOverlayState): boolean {
   )
 }
 
+export function isDataUrl(value: string): boolean {
+  return value.trimStart().startsWith('data:')
+}
+
 export const useStore = create<AppState>()(
     (set, get) => ({
       // Settings
@@ -417,7 +421,9 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
 
   // 持久化输入图片到服务端（此前只在内存缓存中）
   for (const img of orderedInputImages) {
-    await storeImage(img.dataUrl)
+    if (isDataUrl(img.dataUrl)) {
+      await storeImage(img.dataUrl)
+    }
   }
 
   const normalizedParams = {
