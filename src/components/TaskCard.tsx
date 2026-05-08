@@ -7,6 +7,7 @@ import { ParamValue } from '../lib/paramDisplay'
 interface Props {
   task: TaskRecord
   onReuse: () => void
+  onRetry: () => void
   onEditOutputs: () => void
   onDelete: () => void
   onClick: (e: React.MouseEvent | React.TouchEvent) => void
@@ -16,6 +17,7 @@ interface Props {
 export default function TaskCard({
   task,
   onReuse,
+  onRetry,
   onEditOutputs,
   onDelete,
   onClick,
@@ -392,6 +394,27 @@ export default function TaskCard({
                   />
                 </svg>
               </button>
+              {task.status === 'error' && (
+                <button
+                  onClick={onRetry}
+                  className="p-1.5 rounded-md hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-gray-400 hover:text-emerald-500 transition"
+                  title="重新生成"
+                >
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 4v6h6M20 20v-6h-6M5.64 18.36A9 9 0 0018.36 5.64L20 4M4 20l1.64-1.64"
+                    />
+                  </svg>
+                </button>
+              )}
               <button
                 onClick={onEditOutputs}
                 className="p-1.5 rounded-md hover:bg-green-50 dark:hover:bg-green-950/30 text-gray-400 hover:text-green-500 transition disabled:opacity-30"

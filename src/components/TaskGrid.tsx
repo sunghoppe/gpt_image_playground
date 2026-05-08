@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { useStore, reuseConfig, editOutputs, removeTask, hasBlockingOverlayOpen } from '../store'
+import { useStore, reuseConfig, retryTask, editOutputs, removeTask, hasBlockingOverlayOpen } from '../store'
 import TaskCard from './TaskCard'
 
 export default function TaskGrid() {
@@ -242,6 +242,7 @@ export default function TaskGrid() {
                 }
               }}
               onReuse={() => reuseConfig(task)}
+              onRetry={() => retryTask(task)}
               onEditOutputs={() => editOutputs(task)}
               onDelete={() => handleDelete(task)}
               isSelected={selectedTaskIds.includes(task.id)}

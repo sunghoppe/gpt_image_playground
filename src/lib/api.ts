@@ -42,6 +42,19 @@ function getDataUrlDecodedByteSize(dataUrl: string): number {
   return Math.max(0, Math.floor((normalized.length * 3) / 4) - padding)
 }
 
+function getRequestTimeoutSeconds(settings: AppSettings): number {
+  const timeout = Number(settings.timeout)
+  return Number.isFinite(timeout) && timeout > 0 ? timeout : 900
+}
+
+function createTimeoutError(settings: AppSettings): Error {
+  return new Error(`请求已等待 ${getRequestTimeoutSeconds(settings)} 秒后超时，请在设置中调大“请求超时”，并确认反向代理 proxy_read_timeout 大于该值`)
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
 function assertMaxBytes(label: string, bytes: number, maxBytes: number) {
   if (bytes > maxBytes) {
     throw new Error(`${label}过大：${formatMiB(bytes)}，上限为 ${formatMiB(maxBytes)}`)
@@ -289,7 +302,7 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
   const requestHeaders = createRequestHeaders(settings)
 
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), settings.timeout * 1000)
+  const timeoutId = setTimeout(() => controller.abort(), getRequestTimeoutSeconds(settings) * 1000)
 
   try {
     let response: Response
@@ -421,6 +434,9 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
       actualParamsList: images.map(() => actualParams),
       revisedPrompts,
     }
+  } catch (error) {
+    if (isAbortError(error)) throw createTimeoutError(settings)
+    throw error
   } finally {
     clearTimeout(timeoutId)
   }
@@ -466,7 +482,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions): Promise<CallAp
   const proxyConfig = readClientDevProxyConfig()
   const requestHeaders = createRequestHeaders(settings)
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), settings.timeout * 1000)
+  const timeoutId = setTimeout(() => controller.abort(), getRequestTimeoutSeconds(settings) * 1000)
 
   try {
     if (opts.maskDataUrl) {
@@ -513,6 +529,9 @@ async function callResponsesImageApiSingle(opts: CallApiOptions): Promise<CallAp
       ),
       revisedPrompts: imageResults.map((result) => result.revisedPrompt),
     }
+  } catch (error) {
+    if (isAbortError(error)) throw createTimeoutError(settings)
+    throw error
   } finally {
     clearTimeout(timeoutId)
   }

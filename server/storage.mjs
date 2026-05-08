@@ -9,7 +9,7 @@ const DEFAULT_SETTINGS = {
   apiKey: '',
   model: 'gpt-image-2',
   azureApiVersion: '2025-04-01-preview',
-  timeout: 300,
+  timeout: 900,
   apiMode: 'images',
   codexCli: false,
 }
@@ -98,6 +98,9 @@ export function maskSecret(value) {
 function normalizeState(input) {
   const state = { ...createEmptyState(), ...(input && typeof input === 'object' ? input : {}) }
   state.settings = { ...DEFAULT_SETTINGS, apiKey: undefined, ...(state.settings || {}) }
+  if (!Number.isFinite(Number(state.settings.timeout)) || Number(state.settings.timeout) < DEFAULT_SETTINGS.timeout) {
+    state.settings.timeout = DEFAULT_SETTINGS.timeout
+  }
   state.params = { ...DEFAULT_PARAMS, ...(state.params || {}) }
   state.tasks = Array.isArray(state.tasks) ? state.tasks : []
   state.images = state.images && typeof state.images === 'object' ? state.images : {}

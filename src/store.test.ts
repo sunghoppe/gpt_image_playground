@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS, DEFAULT_SETTINGS } from './types'
 import type { TaskRecord } from './types'
-import { editOutputs, hasBlockingOverlayOpen, isDataUrl, submitTask, useStore } from './store'
+import { editOutputs, hasBlockingOverlayOpen, isDataUrl, retryTask, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 
@@ -25,6 +25,7 @@ function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
 
 describe('mask draft lifecycle in store actions', () => {
   beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ id: 'ok', ok: true }), { status: 200 })))
     useStore.setState({
       settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key' },
       prompt: 'prompt',
@@ -81,6 +82,33 @@ describe('mask draft lifecycle in store actions', () => {
 
     expect(useStore.getState().tasks[0].prompt).toBe('a cat wearing sunglasses')
     expect(useStore.getState().prompt).toBe('')
+  })
+
+  it('creates a new running task when retrying an error task', async () => {
+    const failedTask = task({
+      id: 'failed-task',
+      prompt: 'retry prompt',
+      params: { ...DEFAULT_PARAMS, n: 2 },
+      status: 'error',
+      error: 'HTTP 504',
+      inputImageIds: [imageA.id],
+      outputImages: [],
+      finishedAt: 2,
+      elapsed: 1,
+    })
+    useStore.setState({ tasks: [failedTask], prompt: 'current prompt' })
+
+    await retryTask(failedTask)
+
+    const [retriedTask, originalTask] = useStore.getState().tasks
+    expect(retriedTask.id).not.toBe(failedTask.id)
+    expect(retriedTask.prompt).toBe('retry prompt')
+    expect(retriedTask.params.n).toBe(2)
+    expect(retriedTask.inputImageIds).toEqual([imageA.id])
+    expect(retriedTask.status).toBe('running')
+    expect(retriedTask.error).toBeNull()
+    expect(originalTask).toBe(failedTask)
+    expect(useStore.getState().prompt).toBe('current prompt')
   })
 })
 

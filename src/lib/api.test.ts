@@ -69,4 +69,15 @@ describe('callImageApi', () => {
       size: '1033x1522',
     }])
   })
+
+  it('reports a clear timeout message when the browser aborts the request', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException('signal is aborted without reason', 'AbortError'))
+
+    await expect(callImageApi({
+      settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key', timeout: 123 },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    })).rejects.toThrow('请求已等待 123 秒后超时')
+  })
 })

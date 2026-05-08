@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { access, mkdtemp, rm } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createDataStore, maskSecret } from '../storage.mjs'
@@ -37,6 +38,27 @@ test('settings API stores apiKey encrypted and returns only masked key', async (
     const raw = await store.readRawState()
     assert.equal(raw.settings.apiKey, undefined)
     assert.notEqual(raw.secrets.apiKeyCiphertext, 'secret-api-key-1234')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('settings timeout below the default is upgraded for long image requests', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gpt-image-store-'))
+  try {
+    await writeFile(join(dir, 'state.json'), JSON.stringify({
+      version: 1,
+      settings: { timeout: 300 },
+      params: {},
+      tasks: [],
+      images: {},
+      secrets: {},
+    }))
+    const store = await createDataStore({ dataDir: dir, secret: 'test-secret' })
+
+    const settings = await store.getPublicSettings()
+
+    assert.equal(settings.timeout, 900)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

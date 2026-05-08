@@ -435,14 +435,33 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
     useStore.getState().setParams({ size: normalizedParams.size, quality: normalizedParams.quality })
   }
 
-  const taskId = genId()
-  const task: TaskRecord = {
-    id: taskId,
+  const task = await createRunningTask({
     prompt: prompt.trim(),
     params: normalizedParams,
     inputImageIds: orderedInputImages.map((i) => i.id),
     maskTargetImageId,
     maskImageId,
+    statePatch: { prompt: '' },
+  })
+
+  executeTask(task.id)
+}
+
+async function createRunningTask(options: {
+  prompt: string
+  params: TaskParams
+  inputImageIds: string[]
+  maskTargetImageId?: string | null
+  maskImageId?: string | null
+  statePatch?: Partial<AppState>
+}): Promise<TaskRecord> {
+  const task: TaskRecord = {
+    id: genId(),
+    prompt: options.prompt,
+    params: options.params,
+    inputImageIds: options.inputImageIds,
+    maskTargetImageId: options.maskTargetImageId ?? null,
+    maskImageId: options.maskImageId ?? null,
     outputImages: [],
     status: 'running',
     error: null,
@@ -452,11 +471,23 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
   }
 
   const latestTasks = useStore.getState().tasks
-  useStore.setState({ prompt: '', tasks: [task, ...latestTasks] })
+  useStore.setState({ ...options.statePatch, tasks: [task, ...latestTasks] })
   await putTask(task)
+  return task
+}
 
-  // 异步调用 API
-  executeTask(taskId)
+export async function retryTask(task: TaskRecord) {
+  if (task.status !== 'error') return
+
+  const retriedTask = await createRunningTask({
+    prompt: task.prompt,
+    params: task.params,
+    inputImageIds: [...task.inputImageIds],
+    maskTargetImageId: task.maskTargetImageId ?? null,
+    maskImageId: task.maskImageId ?? null,
+  })
+  useStore.getState().showToast('已重新提交生成任务', 'success')
+  executeTask(retriedTask.id)
 }
 
 async function executeTask(taskId: string) {

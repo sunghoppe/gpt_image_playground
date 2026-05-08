@@ -27,7 +27,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   apiKey: '',
   model: DEFAULT_IMAGES_MODEL,
   azureApiVersion: DEFAULT_AZURE_API_VERSION,
-  timeout: 300,
+  timeout: 900,
   apiMode: 'images',
   codexCli: false,
 }
