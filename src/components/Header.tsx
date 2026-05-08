@@ -1,11 +1,9 @@
 import { useState } from 'react'
 import { useStore } from '../store'
-import { useVersionCheck } from '../hooks/useVersionCheck'
 import HelpModal from './HelpModal'
 
 export default function Header() {
   const setShowSettings = useStore((s) => s.setShowSettings)
-  const { hasUpdate, latestRelease, dismiss } = useVersionCheck()
   const [showHelp, setShowHelp] = useState(false)
 
   return (
@@ -13,27 +11,10 @@ export default function Header() {
       <div className="safe-area-x safe-header-inner max-w-7xl mx-auto flex items-center justify-between">
         <div className="flex items-start gap-1">
           <h1 className="text-lg font-bold tracking-tight">
-            <a
-              href="https://github.com/CookSleep/gpt_image_playground"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-gray-800 dark:text-gray-100 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-            >
+            <span className="text-gray-800 dark:text-gray-100">
               GPT Image Playground
-            </a>
+            </span>
           </h1>
-          {hasUpdate && latestRelease && (
-            <a
-              href={latestRelease.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={dismiss}
-              className="px-1.5 py-0.5 mt-0.5 rounded border border-red-500/30 text-[10px] font-bold bg-red-500 text-white hover:bg-red-600 transition-colors animate-fade-in leading-none"
-              title={`新版本 ${latestRelease.tag}`}
-            >
-              NEW
-            </a>
-          )}
         </div>
         <div className="flex items-center gap-1">
           <button
