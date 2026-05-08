@@ -3,6 +3,7 @@ import { createReadStream, existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { extname, join, normalize, resolve } from 'node:path'
 import { createDataStore } from './storage.mjs'
+import { getServerTimeouts } from './httpConfig.mjs'
 import {
   SESSION_COOKIE,
   createSessionCookie,
@@ -18,6 +19,7 @@ const DATA_DIR = process.env.DATA_DIR || '/data'
 const PUBLIC_DIR = process.env.PUBLIC_DIR || join(process.cwd(), 'dist')
 const APP_LOGIN_KEY = process.env.APP_LOGIN_KEY || ''
 const APP_SECRET = process.env.APP_SECRET || APP_LOGIN_KEY || 'gpt-image-playground-dev-secret'
+const SERVER_TIMEOUTS = getServerTimeouts()
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -87,12 +89,26 @@ async function proxyOpenAI(req, res, path) {
   const contentType = req.headers['content-type']
   if (contentType) headers['Content-Type'] = contentType
 
-  const upstream = await fetch(buildUpstreamUrl(settings, path), {
-    method: req.method,
-    headers,
-    body: req.method === 'GET' || req.method === 'HEAD' ? undefined : req,
-    duplex: 'half',
-  })
+  let upstream
+  const startedAt = Date.now()
+  const upstreamUrl = buildUpstreamUrl(settings, path)
+  try {
+    upstream = await fetch(upstreamUrl, {
+      method: req.method,
+      headers,
+      body: req.method === 'GET' || req.method === 'HEAD' ? undefined : req,
+      duplex: 'half',
+    })
+  } catch (error) {
+    const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000)
+    console.error('OpenAI upstream request failed', {
+      path,
+      provider: settings.apiProvider,
+      elapsedSeconds,
+      message: error instanceof Error ? error.message : String(error),
+    })
+    return sendError(res, 504, `上游 API 请求失败或超时，请检查 API 地址、网络连通性和反代超时配置（已等待 ${elapsedSeconds} 秒）`)
+  }
 
   res.writeHead(upstream.status, {
     'Content-Type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
@@ -291,6 +307,10 @@ const server = createServer(async (req, res) => {
     return sendError(res, 500, error instanceof Error ? error.message : '服务器错误')
   }
 })
+
+server.requestTimeout = SERVER_TIMEOUTS.requestTimeoutMs
+server.headersTimeout = SERVER_TIMEOUTS.headersTimeoutMs
+server.keepAliveTimeout = SERVER_TIMEOUTS.keepAliveTimeoutMs
 
 server.listen(PORT, () => {
   console.log(`gpt-image-playground server listening on ${PORT}`)

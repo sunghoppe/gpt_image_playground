@@ -39,6 +39,7 @@ services:
       APP_LOGIN_KEY: 你的登录密码
       APP_SECRET: 一串很长的随机密钥
       DATA_DIR: /data
+      SERVER_REQUEST_TIMEOUT_SECONDS: 900
     volumes:
       - ./data:/data
     ports:
@@ -79,6 +80,7 @@ npm run start
 | `APP_SECRET` | 用于加密保存 API Key 和签名登录 Cookie，部署后请保持固定 |
 | `DATA_DIR` | 数据保存目录，默认 `/data` |
 | `PORT` | 服务监听端口，默认 `3000` |
+| `SERVER_REQUEST_TIMEOUT_SECONDS` | 服务端长请求超时，默认 `900` 秒 |
 
 ## 反向代理
 
@@ -91,7 +93,13 @@ proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 proxy_set_header X-Forwarded-Proto $scheme;
 proxy_set_header Cookie $http_cookie;
 proxy_pass_header Set-Cookie;
+proxy_connect_timeout 60s;
+proxy_send_timeout 900s;
+proxy_read_timeout 900s;
+send_timeout 900s;
 ```
+
+图片生成可能耗时较长。如果反代保持默认超时，常见表现是在生成过程中返回 `504 Gateway Timeout`。
 
 ## API 配置
 

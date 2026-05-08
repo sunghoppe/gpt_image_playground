@@ -9,6 +9,7 @@ services:
       APP_LOGIN_KEY: ${APP_LOGIN_KEY:-change-me}
       APP_SECRET: ${APP_SECRET:-change-me-to-a-long-random-secret}
       DATA_DIR: /data
+      SERVER_REQUEST_TIMEOUT_SECONDS: ${SERVER_REQUEST_TIMEOUT_SECONDS:-900}
     volumes:
       - ./data:/data
     ports:
