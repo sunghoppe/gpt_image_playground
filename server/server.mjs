@@ -2,17 +2,22 @@ import { createServer } from 'node:http'
 import { createReadStream, existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { extname, join, normalize, resolve } from 'node:path'
-import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createDataStore } from './storage.mjs'
+import {
+  SESSION_COOKIE,
+  createSessionCookie,
+  parseCookies,
+  safeCompare,
+  sessionClearCookieHeader,
+  sessionSetCookieHeader,
+  verifySessionCookie,
+} from './auth.mjs'
 
 const PORT = Number(process.env.PORT || 3000)
 const DATA_DIR = process.env.DATA_DIR || '/data'
 const PUBLIC_DIR = process.env.PUBLIC_DIR || join(process.cwd(), 'dist')
 const APP_LOGIN_KEY = process.env.APP_LOGIN_KEY || ''
 const APP_SECRET = process.env.APP_SECRET || APP_LOGIN_KEY || 'gpt-image-playground-dev-secret'
-const SESSION_COOKIE = 'gip_session'
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
-const sessions = new Map()
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -112,31 +117,10 @@ function sendError(res, status, message) {
   sendJson(res, status, { error: message })
 }
 
-function parseCookies(req) {
-  const header = req.headers.cookie || ''
-  return Object.fromEntries(header.split(';').map((part) => {
-    const index = part.indexOf('=')
-    if (index < 0) return ['', '']
-    return [part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())]
-  }).filter(([key]) => key))
-}
-
-function safeEqual(a, b) {
-  const left = Buffer.from(String(a))
-  const right = Buffer.from(String(b))
-  return left.length === right.length && timingSafeEqual(left, right)
-}
-
 function isAuthenticated(req) {
   if (!APP_LOGIN_KEY) return true
   const token = parseCookies(req)[SESSION_COOKIE]
-  if (!token) return false
-  const expiresAt = sessions.get(token)
-  if (!expiresAt || expiresAt < Date.now()) {
-    sessions.delete(token)
-    return false
-  }
-  return true
+  return verifySessionCookie(token, APP_SECRET)
 }
 
 async function readJson(req) {
@@ -152,15 +136,11 @@ async function readJson(req) {
 }
 
 function createSession(res) {
-  const token = randomBytes(32).toString('base64url')
-  sessions.set(token, Date.now() + SESSION_TTL_MS)
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_MS / 1000}`)
+  res.setHeader('Set-Cookie', sessionSetCookieHeader(createSessionCookie(APP_SECRET)))
 }
 
 function clearSession(req, res) {
-  const token = parseCookies(req)[SESSION_COOKIE]
-  if (token) sessions.delete(token)
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`)
+  res.setHeader('Set-Cookie', sessionClearCookieHeader())
 }
 
 async function handleApi(req, res, url) {
@@ -171,7 +151,7 @@ async function handleApi(req, res, url) {
   if (url.pathname === '/api/auth/login' && req.method === 'POST') {
     if (!APP_LOGIN_KEY) return sendJson(res, 200, { authenticated: true })
     const body = await readJson(req)
-    if (!safeEqual(body.key || '', APP_LOGIN_KEY)) return sendError(res, 401, '登录密钥错误')
+    if (!safeCompare(body.key || '', APP_LOGIN_KEY)) return sendError(res, 401, '登录密钥错误')
     createSession(res)
     return sendJson(res, 200, { authenticated: true })
   }
