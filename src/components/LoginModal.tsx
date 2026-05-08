@@ -28,8 +28,10 @@ export default function LoginModal() {
     setError('')
     try {
       await apiPost('/api/auth/login', { key })
+      const status = await apiGet<{ authenticated: boolean; authRequired: boolean }>('/api/auth/status')
+      if (!status.authenticated) throw new Error('登录状态未生效，请清理浏览器缓存后重试')
       setAuthenticated(true)
-      window.location.reload()
+      setAuthRequired(status.authRequired)
     } catch (error) {
       setError(error instanceof Error ? error.message : '登录失败')
     }
