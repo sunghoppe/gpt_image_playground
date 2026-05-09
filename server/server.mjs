@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises'
 import { extname, join, normalize, resolve } from 'node:path'
 import { createDataStore } from './storage.mjs'
 import { getServerTimeouts } from './httpConfig.mjs'
+import { createRequestId, elapsedMs, logError, logInfo, redactUrl } from './logger.mjs'
 import {
   SESSION_COOKIE,
   createSessionCookie,
@@ -92,6 +93,18 @@ async function proxyOpenAI(req, res, path) {
   let upstream
   const startedAt = Date.now()
   const upstreamUrl = buildUpstreamUrl(settings, path)
+  const requestId = req.requestId || createRequestId()
+  logInfo('openai.upstream.start', {
+    requestId,
+    method: req.method,
+    path,
+    provider: settings.apiProvider,
+    apiMode: settings.apiMode,
+    model: settings.model,
+    upstreamUrl: redactUrl(upstreamUrl),
+    contentType: contentType || null,
+    contentLength: req.headers['content-length'] || null,
+  })
   try {
     upstream = await fetch(upstreamUrl, {
       method: req.method,
@@ -101,14 +114,25 @@ async function proxyOpenAI(req, res, path) {
     })
   } catch (error) {
     const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000)
-    console.error('OpenAI upstream request failed', {
+    logError('openai.upstream.error', {
+      requestId,
       path,
       provider: settings.apiProvider,
+      upstreamUrl: redactUrl(upstreamUrl),
       elapsedSeconds,
       message: error instanceof Error ? error.message : String(error),
     })
     return sendError(res, 504, `上游 API 请求失败或超时，请检查 API 地址、网络连通性和反代超时配置（已等待 ${elapsedSeconds} 秒）`)
   }
+
+  logInfo('openai.upstream.response', {
+    requestId,
+    path,
+    provider: settings.apiProvider,
+    status: upstream.status,
+    elapsedMs: elapsedMs(startedAt),
+    contentType: upstream.headers.get('content-type') || null,
+  })
 
   res.writeHead(upstream.status, {
     'Content-Type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
@@ -118,6 +142,12 @@ async function proxyOpenAI(req, res, path) {
     for await (const chunk of upstream.body) res.write(chunk)
   }
   res.end()
+  logInfo('openai.proxy.complete', {
+    requestId,
+    path,
+    status: upstream.status,
+    elapsedMs: elapsedMs(startedAt),
+  })
 }
 
 function sendJson(res, status, data) {
@@ -298,12 +328,45 @@ function serveStatic(req, res, url) {
 }
 
 const server = createServer(async (req, res) => {
+  const requestId = createRequestId()
+  const startedAt = Date.now()
+  req.requestId = requestId
+  res.on('finish', () => {
+    const url = req.url || '/'
+    if (url.startsWith('/api/')) {
+      logInfo('http.request.finish', {
+        requestId,
+        method: req.method,
+        path: url.split('?')[0],
+        status: res.statusCode,
+        elapsedMs: elapsedMs(startedAt),
+        contentLength: req.headers['content-length'] || null,
+        userAgent: req.headers['user-agent'] || null,
+        forwardedFor: req.headers['x-forwarded-for'] || null,
+      })
+    }
+  })
+  req.on('aborted', () => {
+    logError('http.request.aborted', {
+      requestId,
+      method: req.method,
+      path: (req.url || '/').split('?')[0],
+      elapsedMs: elapsedMs(startedAt),
+      contentLength: req.headers['content-length'] || null,
+    })
+  })
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url)
     return serveStatic(req, res, url)
   } catch (error) {
-    console.error(error)
+    logError('http.request.error', {
+      requestId,
+      method: req.method,
+      path: (req.url || '/').split('?')[0],
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    })
     return sendError(res, 500, error instanceof Error ? error.message : '服务器错误')
   }
 })
@@ -313,5 +376,12 @@ server.headersTimeout = SERVER_TIMEOUTS.headersTimeoutMs
 server.keepAliveTimeout = SERVER_TIMEOUTS.keepAliveTimeoutMs
 
 server.listen(PORT, () => {
-  console.log(`gpt-image-playground server listening on ${PORT}`)
+  logInfo('server.listen', {
+    port: PORT,
+    dataDir: DATA_DIR,
+    publicDir: PUBLIC_DIR,
+    requestTimeoutMs: SERVER_TIMEOUTS.requestTimeoutMs,
+    headersTimeoutMs: SERVER_TIMEOUTS.headersTimeoutMs,
+    keepAliveTimeoutMs: SERVER_TIMEOUTS.keepAliveTimeoutMs,
+  })
 })
