@@ -92,6 +92,60 @@ test('deleteImage removes image metadata and file from disk', async () => {
   }
 })
 
+test('updateTask patches an existing task without replacing other fields', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gpt-image-store-'))
+  try {
+    const store = await createDataStore({ dataDir: dir, secret: 'test-secret' })
+    const task = {
+      id: 'task-update-test',
+      prompt: 'prompt',
+      params: {},
+      inputImageIds: [],
+      maskTargetImageId: null,
+      maskImageId: null,
+      outputImages: [],
+      status: 'running',
+      error: null,
+      createdAt: 1,
+      finishedAt: null,
+      elapsed: null,
+    }
+    await store.putTask(task)
+
+    const updated = await store.updateTask(task.id, { status: 'error', error: 'failed', finishedAt: 2 })
+
+    assert.equal(updated.prompt, 'prompt')
+    assert.equal(updated.status, 'error')
+    assert.equal(updated.error, 'failed')
+    assert.equal((await store.getTask(task.id)).finishedAt, 2)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('markRunningTasksAsError changes only running tasks', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gpt-image-store-'))
+  try {
+    const store = await createDataStore({ dataDir: dir, secret: 'test-secret' })
+    await store.putTask({
+      id: 'task-running', prompt: 'running', params: {}, inputImageIds: [], maskTargetImageId: null, maskImageId: null,
+      outputImages: [], status: 'running', error: null, createdAt: 1, finishedAt: null, elapsed: null,
+    })
+    await store.putTask({
+      id: 'task-done', prompt: 'done', params: {}, inputImageIds: [], maskTargetImageId: null, maskImageId: null,
+      outputImages: [], status: 'done', error: null, createdAt: 1, finishedAt: 2, elapsed: 1,
+    })
+
+    await store.markRunningTasksAsError('interrupted')
+
+    assert.equal((await store.getTask('task-running')).status, 'error')
+    assert.equal((await store.getTask('task-running')).error, 'interrupted')
+    assert.equal((await store.getTask('task-done')).status, 'done')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('clearImages removes all image files from disk', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gpt-image-store-'))
   try {

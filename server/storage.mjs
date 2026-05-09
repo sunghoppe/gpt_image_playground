@@ -231,6 +231,23 @@ export async function createDataStore({ dataDir, secret }) {
     return task.id
   }
 
+  async function getTask(id) {
+    return (await readRawState()).tasks.find((task) => task.id === id)
+  }
+
+  async function updateTask(id, patch) {
+    let updatedTask
+    await update((state) => {
+      state.tasks = state.tasks.map((task) => {
+        if (task.id !== id) return task
+        updatedTask = { ...task, ...(patch || {}) }
+        return updatedTask
+      })
+      return state
+    })
+    return updatedTask
+  }
+
   async function deleteTask(id) {
     return update((state) => {
       state.tasks = state.tasks.filter((task) => task.id !== id)
@@ -241,6 +258,22 @@ export async function createDataStore({ dataDir, secret }) {
   async function clearTasks() {
     return update((state) => {
       state.tasks = []
+      return state
+    })
+  }
+
+  async function markRunningTasksAsError(message) {
+    return update((state) => {
+      const now = Date.now()
+      state.tasks = state.tasks.map((task) => task.status === 'running'
+        ? {
+            ...task,
+            status: 'error',
+            error: message,
+            finishedAt: task.finishedAt || now,
+            elapsed: task.elapsed ?? now - (task.createdAt || now),
+          }
+        : task)
       return state
     })
   }
@@ -337,8 +370,11 @@ export async function createDataStore({ dataDir, secret }) {
     getAllTasks,
     getPagedTasks,
     putTask,
+    getTask,
+    updateTask,
     deleteTask,
     clearTasks,
+    markRunningTasksAsError,
     getImage,
     getImageContent,
     getAllImages,

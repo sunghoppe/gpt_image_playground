@@ -176,6 +176,14 @@ export default function TaskGrid() {
   }, [searchQuery, filterStatus, filterFavorite, reloadTasks])
 
   useEffect(() => {
+    if (!tasks.some((task) => task.status === 'running')) return
+    const intervalId = window.setInterval(() => {
+      void reloadTasks()
+    }, 3000)
+    return () => window.clearInterval(intervalId)
+  }, [tasks, reloadTasks])
+
+  useEffect(() => {
     const target = loadMoreRef.current
     if (!target || tasksNextOffset == null) return
     const observer = new IntersectionObserver((entries) => {

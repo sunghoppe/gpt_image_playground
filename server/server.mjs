@@ -5,6 +5,8 @@ import { extname, join, normalize, resolve } from 'node:path'
 import { createDataStore } from './storage.mjs'
 import { getServerTimeouts } from './httpConfig.mjs'
 import { createRequestId, elapsedMs, logError, logInfo, redactUrl } from './logger.mjs'
+import { buildUpstreamUrl } from './openai.mjs'
+import { createTaskRunner } from './taskRunner.mjs'
 import {
   SESSION_COOKIE,
   createSessionCookie,
@@ -37,44 +39,9 @@ const MIME_TYPES = {
 
 await mkdir(DATA_DIR, { recursive: true })
 const store = await createDataStore({ dataDir: DATA_DIR, secret: APP_SECRET })
+await store.markRunningTasksAsError('服务已重启，正在运行的任务已中断，请重新生成')
+const taskRunner = createTaskRunner({ store })
 
-
-function normalizeBaseUrl(baseUrl) {
-  const trimmed = String(baseUrl || '').trim()
-  if (!trimmed) return ''
-  const input = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`
-  const url = new URL(input)
-  const pathSegments = url.pathname.split('/').filter(Boolean)
-  const v1Index = pathSegments.indexOf('v1')
-  const normalizedSegments = v1Index >= 0
-    ? pathSegments.slice(0, v1Index + 1)
-    : pathSegments.length
-      ? [...pathSegments, 'v1']
-      : []
-  const pathname = normalizedSegments.length ? `/${normalizedSegments.join('/')}` : ''
-  return `${url.origin}${pathname}`
-}
-
-function normalizeAzureResourceUrl(baseUrl) {
-  const trimmed = String(baseUrl || '').trim()
-  if (!trimmed) return ''
-  const input = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`
-  return new URL(input).origin
-}
-
-function buildUpstreamUrl(settings, path) {
-  const endpointPath = path.replace(/^\/+/, '')
-  if (settings.apiProvider === 'azure') {
-    const resourceUrl = normalizeAzureResourceUrl(settings.baseUrl)
-    const deployment = encodeURIComponent(String(settings.model || '').trim())
-    const query = new URLSearchParams({ 'api-version': settings.azureApiVersion || '2025-04-01-preview' })
-    return `${resourceUrl}/openai/deployments/${deployment}/${endpointPath}?${query}`
-  }
-
-  const baseUrl = normalizeBaseUrl(settings.baseUrl)
-  const apiPath = baseUrl.endsWith('/v1') ? endpointPath : `v1/${endpointPath}`
-  return `${baseUrl}/${apiPath}`
-}
 
 async function proxyOpenAI(req, res, path) {
   const settings = await store.getPrivateSettings()
@@ -211,6 +178,26 @@ async function handleApi(req, res, url) {
 
   if (url.pathname.startsWith('/api/openai/')) {
     return proxyOpenAI(req, res, url.pathname.replace('/api/openai/', ''))
+  }
+
+  if (url.pathname === '/api/tasks/generate' && req.method === 'POST') {
+    const settings = await store.getPrivateSettings()
+    if (!settings.apiKey) return sendError(res, 400, '请先配置 API Key')
+    const body = await readJson(req)
+    if (!String(body.prompt || '').trim()) return sendError(res, 400, '请输入提示词')
+    const task = taskRunner.createTask({
+      prompt: body.prompt,
+      params: body.params,
+      inputImageIds: Array.isArray(body.inputImageIds) ? body.inputImageIds : [],
+      maskTargetImageId: body.maskTargetImageId ?? null,
+      maskImageId: body.maskImageId ?? null,
+    })
+    await store.putTask(task)
+    logInfo('task.api.created', { requestId: req.requestId, taskId: task.id })
+    setImmediate(() => {
+      void taskRunner.runTask(task.id)
+    })
+    return sendJson(res, 200, task)
   }
 
   if (url.pathname === '/api/bootstrap' && req.method === 'GET') {

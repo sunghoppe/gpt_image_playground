@@ -25,7 +25,29 @@ function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
 
 describe('mask draft lifecycle in store actions', () => {
   beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ id: 'ok', ok: true }), { status: 200 })))
+    let generatedTaskIndex = 0
+    vi.stubGlobal('fetch', vi.fn(async (input, init) => {
+      const url = String(input)
+      if (url === '/api/tasks/generate') {
+        generatedTaskIndex += 1
+        const body = JSON.parse(String(init?.body || '{}'))
+        return new Response(JSON.stringify(task({
+          id: `generated-task-${generatedTaskIndex}`,
+          prompt: body.prompt,
+          params: body.params,
+          inputImageIds: body.inputImageIds,
+          maskTargetImageId: body.maskTargetImageId,
+          maskImageId: body.maskImageId,
+          outputImages: [],
+          status: 'running',
+          error: null,
+          createdAt: 10 + generatedTaskIndex,
+          finishedAt: null,
+          elapsed: null,
+        })), { status: 200 })
+      }
+      return new Response(JSON.stringify({ id: 'ok', ok: true }), { status: 200 })
+    }))
     useStore.setState({
       settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key' },
       prompt: 'prompt',
