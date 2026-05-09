@@ -16,6 +16,7 @@ export default function TaskGrid() {
   const tasksLoadingMore = useStore((s) => s.tasksLoadingMore)
   const loadMoreTasks = useStore((s) => s.loadMoreTasks)
   const reloadTasks = useStore((s) => s.reloadTasks)
+  const refreshTask = useStore((s) => s.refreshTask)
 
   const rootRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
@@ -176,12 +177,15 @@ export default function TaskGrid() {
   }, [searchQuery, filterStatus, filterFavorite, reloadTasks])
 
   useEffect(() => {
-    if (!tasks.some((task) => task.status === 'running')) return
+    const runningTaskIds = tasks.filter((task) => task.status === 'running').map((task) => task.id)
+    if (!runningTaskIds.length) return
     const intervalId = window.setInterval(() => {
-      void reloadTasks()
+      for (const taskId of runningTaskIds) {
+        void refreshTask(taskId)
+      }
     }, 3000)
     return () => window.clearInterval(intervalId)
-  }, [tasks, reloadTasks])
+  }, [tasks, refreshTask])
 
   useEffect(() => {
     const target = loadMoreRef.current

@@ -165,6 +165,16 @@ export default function TaskCard({
   const aggregateActualParams = task.outputImages?.length
     ? { ...task.actualParams, n: task.outputImages.length }
     : task.actualParams
+  const runningElapsedSeconds = task.status === 'running'
+    ? Math.max(0, Math.floor((now - task.createdAt) / 1000))
+    : 0
+  const taskStatusText = (() => {
+    if (task.status === 'error') return '已失败'
+    if (task.status === 'done') return '已完成'
+    if (runningElapsedSeconds < 3) return '排队中'
+    if (runningElapsedSeconds > 90) return '保存结果中'
+    return '生成中'
+  })()
   const isSwipeReady = Math.abs(swipeOffset) >= 40
   const showSwipeAction = isSwipeReady || swipeActionActive
   const swipeBgClass = showSwipeAction
@@ -250,7 +260,7 @@ export default function TaskCard({
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                 />
               </svg>
-              <span className="text-xs text-gray-400 dark:text-gray-500">生成中...</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500">{taskStatusText}</span>
             </div>
           )}
           {task.status === 'error' && (
@@ -269,7 +279,7 @@ export default function TaskCard({
                 />
               </svg>
               <span className="text-xs text-red-400 text-center leading-tight">
-                失败
+                {taskStatusText}
               </span>
             </div>
           )}

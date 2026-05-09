@@ -85,6 +85,7 @@ interface AppState {
   tasksLoadingMore: boolean
   loadMoreTasks: () => Promise<void>
   reloadTasks: () => Promise<void>
+  refreshTask: (id: string) => Promise<void>
 
   // 鎼滅储鍜岀瓫閫?
   searchQuery: string
@@ -236,6 +237,16 @@ export const useStore = create<AppState>()(
         try {
           const result = await apiGet<{ items: TaskRecord[]; nextOffset: number | null }>(`/api/tasks?${params}`)
           set({ tasks: result.items, tasksNextOffset: result.nextOffset })
+        } catch (error) {
+          get().showToast('刷新任务失败：' + (error instanceof Error ? error.message : String(error)), 'error')
+        }
+      },
+      refreshTask: async (id) => {
+        try {
+          const task = await apiGet<TaskRecord>(`/api/tasks/${encodeURIComponent(id)}`)
+          set((current) => ({
+            tasks: current.tasks.map((item) => item.id === id ? task : item),
+          }))
         } catch (error) {
           get().showToast('刷新任务失败：' + (error instanceof Error ? error.message : String(error)), 'error')
         }

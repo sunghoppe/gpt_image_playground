@@ -46,6 +46,15 @@ describe('mask draft lifecycle in store actions', () => {
           elapsed: null,
         })), { status: 200 })
       }
+      if (url === '/api/tasks/running-task') {
+        return new Response(JSON.stringify(task({
+          id: 'running-task',
+          status: 'done',
+          outputImages: ['generated-image'],
+          finishedAt: 20,
+          elapsed: 10,
+        })), { status: 200 })
+      }
       return new Response(JSON.stringify({ id: 'ok', ok: true }), { status: 200 })
     }))
     useStore.setState({
@@ -131,6 +140,20 @@ describe('mask draft lifecycle in store actions', () => {
     expect(retriedTask.error).toBeNull()
     expect(originalTask).toBe(failedTask)
     expect(useStore.getState().prompt).toBe('current prompt')
+  })
+
+  it('refreshes a single running task without reloading the task list', async () => {
+    const runningTask = task({ id: 'running-task', status: 'running', finishedAt: null, elapsed: null })
+    const otherTask = task({ id: 'other-task', prompt: 'other' })
+    useStore.setState({ tasks: [runningTask, otherTask] })
+
+    await useStore.getState().refreshTask('running-task')
+
+    const [updatedTask, unchangedTask] = useStore.getState().tasks
+    expect(updatedTask.id).toBe('running-task')
+    expect(updatedTask.status).toBe('done')
+    expect(updatedTask.outputImages).toEqual(['generated-image'])
+    expect(unchangedTask).toBe(otherTask)
   })
 })
 

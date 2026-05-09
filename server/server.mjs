@@ -241,6 +241,12 @@ async function handleApi(req, res, url) {
   }
 
   const taskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/)
+  if (taskMatch && req.method === 'GET') {
+    const task = await store.getTask(decodeURIComponent(taskMatch[1]))
+    if (!task) return sendError(res, 404, '任务不存在')
+    return sendJson(res, 200, task)
+  }
+
   if (taskMatch && req.method === 'PUT') {
     const task = await readJson(req)
     task.id = decodeURIComponent(taskMatch[1])
