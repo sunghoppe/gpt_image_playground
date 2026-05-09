@@ -16,7 +16,7 @@ export default function TaskGrid() {
   const tasksLoadingMore = useStore((s) => s.tasksLoadingMore)
   const loadMoreTasks = useStore((s) => s.loadMoreTasks)
   const reloadTasks = useStore((s) => s.reloadTasks)
-  const refreshTask = useStore((s) => s.refreshTask)
+  const refreshTasks = useStore((s) => s.refreshTasks)
 
   const rootRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
@@ -37,7 +37,7 @@ export default function TaskGrid() {
     
     return sorted.filter((t) => {
       if (filterFavorite && !t.isFavorite) return false
-      const matchStatus = filterStatus === 'all' || t.status === filterStatus
+      const matchStatus = filterStatus === 'all' || t.status === filterStatus || (filterStatus === 'running' && (t.status === 'queued' || t.status === 'saving'))
       if (!matchStatus) return false
       
       if (!q) return true
@@ -177,15 +177,16 @@ export default function TaskGrid() {
   }, [searchQuery, filterStatus, filterFavorite, reloadTasks])
 
   useEffect(() => {
-    const runningTaskIds = tasks.filter((task) => task.status === 'running').map((task) => task.id)
+    const runningTaskIds = tasks.filter((task) => task.status === 'queued' || task.status === 'running' || task.status === 'saving').map((task) => task.id)
     if (!runningTaskIds.length) return
+    const oldestRunningTask = tasks.filter((task) => runningTaskIds.includes(task.id)).reduce((oldest, task) => Math.min(oldest, task.createdAt), Date.now())
+    const elapsedMs = Date.now() - oldestRunningTask
+    const intervalMs = document.hidden ? 15000 : elapsedMs > 120000 ? 8000 : 3000
     const intervalId = window.setInterval(() => {
-      for (const taskId of runningTaskIds) {
-        void refreshTask(taskId)
-      }
-    }, 3000)
+      void refreshTasks(runningTaskIds)
+    }, intervalMs)
     return () => window.clearInterval(intervalId)
-  }, [tasks, refreshTask])
+  }, [tasks, refreshTasks])
 
   useEffect(() => {
     const target = loadMoreRef.current

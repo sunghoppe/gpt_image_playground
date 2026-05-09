@@ -59,7 +59,7 @@ export default function InputBar() {
     
     return sorted.filter((t) => {
       if (filterFavorite && !t.isFavorite) return false
-      const matchStatus = filterStatus === 'all' || t.status === filterStatus
+      const matchStatus = filterStatus === 'all' || t.status === filterStatus || (filterStatus === 'running' && (t.status === 'queued' || t.status === 'saving'))
       if (!matchStatus) return false
       
       if (!q) return true

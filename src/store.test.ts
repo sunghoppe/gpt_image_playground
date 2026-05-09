@@ -39,7 +39,8 @@ describe('mask draft lifecycle in store actions', () => {
           maskTargetImageId: body.maskTargetImageId,
           maskImageId: body.maskImageId,
           outputImages: [],
-          status: 'running',
+          status: 'queued',
+          phase: '排队中',
           error: null,
           createdAt: 10 + generatedTaskIndex,
           finishedAt: null,
@@ -54,6 +55,14 @@ describe('mask draft lifecycle in store actions', () => {
           finishedAt: 20,
           elapsed: 10,
         })), { status: 200 })
+      }
+      if (url === '/api/tasks/status?ids=running-task%2Cother-running-task') {
+        return new Response(JSON.stringify({
+          items: [
+            task({ id: 'running-task', status: 'done', outputImages: ['generated-image'], finishedAt: 20, elapsed: 10 }),
+            task({ id: 'other-running-task', status: 'saving', phase: '?????', finishedAt: null, elapsed: null }),
+          ],
+        }), { status: 200 })
       }
       return new Response(JSON.stringify({ id: 'ok', ok: true }), { status: 200 })
     }))
@@ -136,7 +145,8 @@ describe('mask draft lifecycle in store actions', () => {
     expect(retriedTask.prompt).toBe('retry prompt')
     expect(retriedTask.params.n).toBe(2)
     expect(retriedTask.inputImageIds).toEqual([imageA.id])
-    expect(retriedTask.status).toBe('running')
+    expect(retriedTask.status).toBe('queued')
+    expect(retriedTask.phase).toBe('排队中')
     expect(retriedTask.error).toBeNull()
     expect(originalTask).toBe(failedTask)
     expect(useStore.getState().prompt).toBe('current prompt')
@@ -154,6 +164,21 @@ describe('mask draft lifecycle in store actions', () => {
     expect(updatedTask.status).toBe('done')
     expect(updatedTask.outputImages).toEqual(['generated-image'])
     expect(unchangedTask).toBe(otherTask)
+  })
+
+  it('refreshes multiple running task statuses in one request', async () => {
+    const runningTask = task({ id: 'running-task', status: 'running', finishedAt: null, elapsed: null })
+    const otherRunningTask = task({ id: 'other-running-task', status: 'queued', finishedAt: null, elapsed: null })
+    const doneTask = task({ id: 'done-task', status: 'done' })
+    useStore.setState({ tasks: [runningTask, otherRunningTask, doneTask] })
+
+    await useStore.getState().refreshTasks(['running-task', 'other-running-task'])
+
+    const [updatedTask, updatedOtherTask, unchangedTask] = useStore.getState().tasks
+    expect(updatedTask.status).toBe('done')
+    expect(updatedOtherTask.status).toBe('saving')
+    expect(updatedOtherTask.phase).toBe('?????')
+    expect(unchangedTask).toBe(doneTask)
   })
 })
 

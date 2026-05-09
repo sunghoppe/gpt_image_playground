@@ -69,7 +69,7 @@ export interface MaskDraft {
 
 // ===== 任务记录 =====
 
-export type TaskStatus = 'running' | 'done' | 'error'
+export type TaskStatus = 'queued' | 'running' | 'saving' | 'done' | 'error'
 
 export interface TaskRecord {
   id: string
@@ -88,6 +88,7 @@ export interface TaskRecord {
   /** 输出图片的 image store id 列表 */
   outputImages: string[]
   status: TaskStatus
+  phase?: string
   error: string | null
   createdAt: number
   finishedAt: number | null

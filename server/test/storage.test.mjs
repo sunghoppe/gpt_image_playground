@@ -125,6 +125,9 @@ test('putImage creates thumbnail and preview variants', async () => {
     assert.equal(await exists(join(dir, image.filePath)), true)
     assert.equal(await exists(join(dir, image.thumbnailPath)), true)
     assert.equal(await exists(join(dir, image.previewPath)), true)
+    assert.equal(image.width, 2000)
+    assert.equal(image.height, 1000)
+    assert.equal(image.format, 'png')
 
     const original = await store.getImageContent('image-variant-test')
     const thumbnail = await store.getImageVariantContent('image-variant-test', 'thumbnail')
@@ -137,6 +140,37 @@ test('putImage creates thumbnail and preview variants', async () => {
     assert.equal(preview.mime, 'image/webp')
     assert.equal(thumbnailMeta.width, 480)
     assert.equal(previewMeta.width, 1600)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('maintenance helpers generate variants and remove orphan images', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gpt-image-store-'))
+  try {
+    const store = await createDataStore({ dataDir: dir, secret: 'test-secret' })
+    const source = await sharp({
+      create: {
+        width: 800,
+        height: 400,
+        channels: 4,
+        background: { r: 80, g: 180, b: 100, alpha: 1 },
+      },
+    }).png().toBuffer()
+    await store.putImage({ id: 'used-image', dataUrl: `data:image/png;base64,${source.toString('base64')}`, source: 'generated' })
+    await store.putImage({ id: 'orphan-image', dataUrl: `data:image/png;base64,${source.toString('base64')}`, source: 'generated' })
+    await store.putTask({
+      id: 'uses-image', prompt: 'prompt', params: {}, inputImageIds: [], maskTargetImageId: null, maskImageId: null,
+      outputImages: ['used-image'], status: 'done', error: null, createdAt: 1, finishedAt: 2, elapsed: 1,
+    })
+
+    const variants = await store.ensureAllImageVariants()
+    const cleanup = await store.cleanupOrphanImages()
+
+    assert.equal(variants.checked, 2)
+    assert.equal(cleanup.deleted, 1)
+    assert.ok(await store.getImage('used-image'))
+    assert.equal(await store.getImage('orphan-image'), undefined)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

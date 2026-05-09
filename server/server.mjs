@@ -130,6 +130,30 @@ function sendError(res, status, message) {
   sendJson(res, status, { error: message })
 }
 
+function getEntityTag(size, value) {
+  return `W/"${size}-${String(value || '').replace(/[^a-zA-Z0-9._-]/g, '_')}"`
+}
+
+function sendBinaryContent(req, res, content, extraHeaders = {}) {
+  const etag = getEntityTag(content.size, extraHeaders['X-Image-Id'] || content.ext)
+  if (req.headers['if-none-match'] === etag) {
+    res.writeHead(304, {
+      ETag: etag,
+      'Cache-Control': extraHeaders['Cache-Control'] || 'public, max-age=31536000, immutable',
+    })
+    res.end()
+    return
+  }
+  const { 'X-Image-Id': _imageId, ...headers } = extraHeaders
+  res.writeHead(200, {
+    'Content-Type': content.mime,
+    'Content-Length': content.size,
+    ETag: etag,
+    ...headers,
+  })
+  res.end(content.bytes)
+}
+
 function isAuthenticated(req) {
   if (!APP_LOGIN_KEY) return true
   const token = parseCookies(req)[SESSION_COOKIE]
@@ -157,6 +181,10 @@ function clearSession(req, res) {
 }
 
 async function handleApi(req, res, url) {
+  if (url.pathname === '/api/health' && req.method === 'GET') {
+    return sendJson(res, 200, { ok: true, time: new Date().toISOString() })
+  }
+
   if (url.pathname === '/api/auth/status' && req.method === 'GET') {
     return sendJson(res, 200, { authenticated: isAuthenticated(req), authRequired: Boolean(APP_LOGIN_KEY) })
   }
@@ -200,6 +228,14 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, task)
   }
 
+  if (url.pathname === '/api/maintenance/image-variants' && req.method === 'POST') {
+    return sendJson(res, 200, await store.ensureAllImageVariants())
+  }
+
+  if (url.pathname === '/api/maintenance/orphan-images' && req.method === 'DELETE') {
+    return sendJson(res, 200, await store.cleanupOrphanImages())
+  }
+
   if (url.pathname === '/api/bootstrap' && req.method === 'GET') {
     return sendJson(res, 200, await store.getBootstrap())
   }
@@ -240,6 +276,11 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { ok: true })
   }
 
+  if (url.pathname === '/api/tasks/status' && req.method === 'GET') {
+    const ids = (url.searchParams.get('ids') || '').split(',').map((id) => id.trim()).filter(Boolean)
+    return sendJson(res, 200, { items: await store.getTasksByIds(ids) })
+  }
+
   const taskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/)
   if (taskMatch && req.method === 'GET') {
     const task = await store.getTask(decodeURIComponent(taskMatch[1]))
@@ -270,28 +311,35 @@ async function handleApi(req, res, url) {
 
   const imageContentMatch = url.pathname.match(/^\/api\/images\/([^/]+)\/content$/)
   if (imageContentMatch && req.method === 'GET') {
+    const imageId = decodeURIComponent(imageContentMatch[1])
     const content = await store.getImageContent(decodeURIComponent(imageContentMatch[1]))
     if (!content) return sendError(res, 404, '图片不存在')
-    res.writeHead(200, {
-      'Content-Type': content.mime,
-      'Content-Length': content.size,
+    return sendBinaryContent(req, res, content, {
       'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Image-Id': imageId,
     })
-    res.end(content.bytes)
-    return
+  }
+
+  const imageDownloadMatch = url.pathname.match(/^\/api\/images\/([^/]+)\/download$/)
+  if (imageDownloadMatch && req.method === 'GET') {
+    const imageId = decodeURIComponent(imageDownloadMatch[1])
+    const content = await store.getImageContent(imageId)
+    if (!content) return sendError(res, 404, '图片不存在')
+    return sendBinaryContent(req, res, content, {
+      'Content-Disposition': `attachment; filename="${encodeURIComponent(imageId)}.${content.ext || 'png'}"`,
+      'Cache-Control': 'no-store',
+      'X-Image-Id': imageId,
+    })
   }
 
   const imageVariantMatch = url.pathname.match(/^\/api\/images\/([^/]+)\/(thumbnail|preview)$/)
   if (imageVariantMatch && req.method === 'GET') {
     const content = await store.getImageVariantContent(decodeURIComponent(imageVariantMatch[1]), imageVariantMatch[2])
     if (!content) return sendError(res, 404, '图片不存在')
-    res.writeHead(200, {
-      'Content-Type': content.mime,
-      'Content-Length': content.size,
+    return sendBinaryContent(req, res, content, {
       'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Image-Id': `${decodeURIComponent(imageVariantMatch[1])}-${imageVariantMatch[2]}`,
     })
-    res.end(content.bytes)
-    return
   }
 
   const imageMatch = url.pathname.match(/^\/api\/images\/([^/]+)$/)

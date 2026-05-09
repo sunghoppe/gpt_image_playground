@@ -40,7 +40,7 @@ export default function DetailModal() {
   }, [detailTaskId])
 
   useEffect(() => {
-    if (task?.status !== 'running') return
+    if (task?.status !== 'queued' && task?.status !== 'running' && task?.status !== 'saving') return
     const id = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(id)
   }, [task?.status])
@@ -172,7 +172,7 @@ export default function DetailModal() {
   }
 
   const formatDuration = () => {
-    if (task.status === 'running') {
+    if (task.status === 'queued' || task.status === 'running' || task.status === 'saving') {
       const seconds = Math.max(0, Math.floor((now - task.createdAt) / 1000))
       const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
       const ss = String(seconds % 60).padStart(2, '0')
@@ -354,7 +354,7 @@ export default function DetailModal() {
               )}
             </>
           )}
-          {task.status === 'running' && (
+          {(task.status === 'queued' || task.status === 'running' || task.status === 'saving') && (
             <>
               <div className="absolute left-4 top-4 flex items-center gap-1 bg-black/50 text-white text-xs px-2 py-0.5 rounded backdrop-blur-sm font-mono">
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">

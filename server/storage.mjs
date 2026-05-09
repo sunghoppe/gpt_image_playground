@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import sharp from 'sharp'
+import { createImageVariantFromBytes, readImageMetadata } from './imageVariants.mjs'
 
 const DEFAULT_SETTINGS = {
   apiProvider: 'openai',
@@ -33,10 +33,7 @@ const EXT_BY_MIME = {
   'image/gif': 'gif',
 }
 
-const IMAGE_VARIANTS = {
-  thumbnail: { maxWidth: 480, quality: 78 },
-  preview: { maxWidth: 1600, quality: 86 },
-}
+const CURRENT_STATE_VERSION = 2
 
 function parseDataUrl(dataUrl) {
   const match = DATA_URL_RE.exec(dataUrl || '')
@@ -53,11 +50,6 @@ function getImageRelativePath(id, ext) {
   return join('images', safeId.slice(0, 2) || 'xx', safeId.slice(2, 4) || 'xx', `${safeId}.${ext}`)
 }
 
-function getImageVariantRelativePath(id, variant) {
-  const safeId = String(id).replace(/[^a-zA-Z0-9._-]/g, '_')
-  return join('images', variant, safeId.slice(0, 2) || 'xx', safeId.slice(2, 4) || 'xx', `${safeId}.webp`)
-}
-
 function toPublicImage(image) {
   if (!image) return image
   const { dataUrl, ...publicImage } = image
@@ -66,7 +58,7 @@ function toPublicImage(image) {
 
 function createEmptyState() {
   return {
-    version: 1,
+    version: CURRENT_STATE_VERSION,
     settings: { ...DEFAULT_SETTINGS, apiKey: undefined },
     params: { ...DEFAULT_PARAMS },
     tasks: [],
@@ -74,6 +66,24 @@ function createEmptyState() {
     secrets: {},
     dismissedCodexCliPrompts: [],
   }
+}
+
+function migrateState(input) {
+  const state = input && typeof input === 'object' ? { ...input } : {}
+  const version = Number(state.version || 1)
+  if (version < 2) {
+    state.tasks = Array.isArray(state.tasks)
+      ? state.tasks.map((task) => {
+          if (task.status === 'running') return { ...task, phase: task.phase || '生成中' }
+          if (task.status === 'done') return { ...task, phase: task.phase || '已完成' }
+          if (task.status === 'error') return { ...task, phase: task.phase || '已失败' }
+          return task
+        })
+      : []
+    state.version = 2
+  }
+  if (!state.version || state.version < CURRENT_STATE_VERSION) state.version = CURRENT_STATE_VERSION
+  return state
 }
 
 function getKey(secret) {
@@ -107,7 +117,8 @@ export function maskSecret(value) {
 }
 
 function normalizeState(input) {
-  const state = { ...createEmptyState(), ...(input && typeof input === 'object' ? input : {}) }
+  const migrated = migrateState(input)
+  const state = { ...createEmptyState(), ...migrated }
   state.settings = { ...DEFAULT_SETTINGS, apiKey: undefined, ...(state.settings || {}) }
   if (!Number.isFinite(Number(state.settings.timeout)) || Number(state.settings.timeout) < DEFAULT_SETTINGS.timeout) {
     state.settings.timeout = DEFAULT_SETTINGS.timeout
@@ -246,6 +257,12 @@ export async function createDataStore({ dataDir, secret }) {
     return (await readRawState()).tasks.find((task) => task.id === id)
   }
 
+  async function getTasksByIds(ids) {
+    const idSet = new Set(Array.isArray(ids) ? ids : [])
+    if (!idSet.size) return []
+    return (await readRawState()).tasks.filter((task) => idSet.has(task.id))
+  }
+
   async function updateTask(id, patch) {
     let updatedTask
     await update((state) => {
@@ -313,32 +330,13 @@ export async function createDataStore({ dataDir, secret }) {
     return { bytes, mime: image.mime || 'application/octet-stream', ext: image.ext || 'bin', size: bytes.length }
   }
 
-  async function createImageVariantFromBytes(image, variant, bytes) {
-    const options = IMAGE_VARIANTS[variant]
-    if (!options) return undefined
-    const filePath = getImageVariantRelativePath(image.id, variant)
-    const absolutePath = join(dataDir, filePath)
-    await mkdir(dirname(absolutePath), { recursive: true })
-    try {
-      const variantBytes = await sharp(bytes, { animated: false })
-        .rotate()
-        .resize({ width: options.maxWidth, height: options.maxWidth, fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: options.quality, effort: 4 })
-        .toBuffer()
-      await writeFile(absolutePath, variantBytes)
-      return { filePath, sizeBytes: variantBytes.length }
-    } catch {
-      return undefined
-    }
-  }
-
   async function ensureImageVariant(image, variant) {
     const pathKey = variant === 'thumbnail' ? 'thumbnailPath' : variant === 'preview' ? 'previewPath' : null
     if (!pathKey) return undefined
     if (image[pathKey] && existsSync(join(dataDir, image[pathKey]))) return image
     const original = await getImageContent(image.id)
     if (!original) return undefined
-    const generated = await createImageVariantFromBytes(image, variant, original.bytes)
+    const generated = await createImageVariantFromBytes({ dataDir, id: image.id, variant, bytes: original.bytes })
     if (!generated) return undefined
     const patch = {
       [pathKey]: generated.filePath,
@@ -381,15 +379,18 @@ export async function createDataStore({ dataDir, secret }) {
     await mkdir(dirname(absolutePath), { recursive: true })
     await writeFile(absolutePath, bytes)
 
-    const baseImage = { id: image.id }
-    const thumbnail = await createImageVariantFromBytes(baseImage, 'thumbnail', bytes)
-    const preview = await createImageVariantFromBytes(baseImage, 'preview', bytes)
+    const metadata = await readImageMetadata(bytes)
+    const thumbnail = await createImageVariantFromBytes({ dataDir, id: image.id, variant: 'thumbnail', bytes })
+    const preview = await createImageVariantFromBytes({ dataDir, id: image.id, variant: 'preview', bytes })
 
     const storedImage = {
       id: image.id,
       mime,
       ext,
       sizeBytes: bytes.length,
+      width: metadata.width,
+      height: metadata.height,
+      format: metadata.format,
       filePath,
       thumbnailPath: thumbnail?.filePath,
       thumbnailSizeBytes: thumbnail?.sizeBytes,
@@ -433,6 +434,43 @@ export async function createDataStore({ dataDir, secret }) {
     })
   }
 
+  async function ensureAllImageVariants() {
+    const images = Object.values((await readRawState()).images)
+    let checked = 0
+    let updated = 0
+    let failed = 0
+    for (const image of images) {
+      checked += 1
+      try {
+        const before = await getImage(image.id)
+        const afterThumbnail = before ? await ensureImageVariant(before, 'thumbnail') : undefined
+        const afterPreview = afterThumbnail ? await ensureImageVariant(afterThumbnail, 'preview') : undefined
+        if (afterPreview && (afterPreview.thumbnailPath !== image.thumbnailPath || afterPreview.previewPath !== image.previewPath)) updated += 1
+      } catch {
+        failed += 1
+      }
+    }
+    return { checked, updated, failed }
+  }
+
+  async function cleanupOrphanImages() {
+    const state = await readRawState()
+    const usedImageIds = new Set()
+    for (const task of state.tasks) {
+      for (const id of task.inputImageIds || []) usedImageIds.add(id)
+      if (task.maskImageId) usedImageIds.add(task.maskImageId)
+      for (const id of task.outputImages || []) usedImageIds.add(id)
+    }
+    const imageIds = Object.keys(state.images || {})
+    let deleted = 0
+    for (const id of imageIds) {
+      if (usedImageIds.has(id)) continue
+      await deleteImage(id)
+      deleted += 1
+    }
+    return { checked: imageIds.length, deleted }
+  }
+
   async function updateDismissedCodexCliPrompts(values) {
     return update((state) => {
       state.dismissedCodexCliPrompts = Array.isArray(values) ? values : []
@@ -452,6 +490,7 @@ export async function createDataStore({ dataDir, secret }) {
     getPagedTasks,
     putTask,
     getTask,
+    getTasksByIds,
     updateTask,
     deleteTask,
     clearTasks,
@@ -463,6 +502,8 @@ export async function createDataStore({ dataDir, secret }) {
     putImage,
     deleteImage,
     clearImages,
+    ensureAllImageVariants,
+    cleanupOrphanImages,
     updateDismissedCodexCliPrompts,
   }
 }

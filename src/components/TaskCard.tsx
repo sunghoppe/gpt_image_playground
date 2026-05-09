@@ -31,10 +31,25 @@ export default function TaskCard({
   const [isSwiping, setIsSwiping] = useState(false)
   const [swipeStartedSelected, setSwipeStartedSelected] = useState(false)
   const [swipeActionActive, setSwipeActionActive] = useState(false)
+  const [isVisible, setIsVisible] = useState(false)
   const toggleTaskSelection = useStore((s) => s.toggleTaskSelection)
+  const cardRef = useRef<HTMLDivElement>(null)
   const touchStartRef = useRef<{ x: number; y: number } | null>(null)
   const swipeResetTimerRef = useRef<number | null>(null)
   const suppressClickUntilRef = useRef(0)
+
+  useEffect(() => {
+    const target = cardRef.current
+    if (!target) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setIsVisible(true)
+        observer.disconnect()
+      }
+    }, { rootMargin: '600px 0px' })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [])
   const horizontalSwipeRef = useRef(false)
 
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -105,7 +120,7 @@ export default function TaskCard({
 
   // 定时更新运行中任务的计时
   useEffect(() => {
-    if (task.status !== 'running') return
+    if (task.status !== 'queued' && task.status !== 'running' && task.status !== 'saving') return
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
   }, [task.status])
@@ -114,6 +129,8 @@ export default function TaskCard({
   useEffect(() => {
     setCoverRatio('')
     setCoverSize('')
+
+    if (!isVisible) return
 
     if (task.outputImages?.[0]) {
       const cached = getCachedImageVariant(task.outputImages[0], 'thumbnail')
@@ -125,7 +142,7 @@ export default function TaskCard({
         })
       }
     }
-  }, [task.outputImages])
+  }, [task.outputImages, isVisible])
 
   useEffect(() => {
     if (!thumbSrc) return
@@ -151,7 +168,7 @@ export default function TaskCard({
 
   const duration = (() => {
     let seconds: number
-    if (task.status === 'running') {
+    if (task.status === 'queued' || task.status === 'running' || task.status === 'saving') {
       seconds = Math.floor((now - task.createdAt) / 1000)
     } else if (task.elapsed != null) {
       seconds = Math.floor(task.elapsed / 1000)
@@ -165,7 +182,7 @@ export default function TaskCard({
   const aggregateActualParams = task.outputImages?.length
     ? { ...task.actualParams, n: task.outputImages.length }
     : task.actualParams
-  const runningElapsedSeconds = task.status === 'running'
+  const runningElapsedSeconds = task.status === 'queued' || task.status === 'running' || task.status === 'saving'
     ? Math.max(0, Math.floor((now - task.createdAt) / 1000))
     : 0
   const taskStatusText = (() => {
@@ -203,10 +220,11 @@ export default function TaskCard({
       </div>
 
       <div
+        ref={cardRef}
         className={`relative bg-white dark:bg-gray-900 rounded-xl border overflow-hidden cursor-pointer duration-200 hover:shadow-lg dark:hover:bg-gray-800/80 ${
           !isSwiping ? 'transition-[box-shadow,border-color,background-color,transform]' : 'transition-[box-shadow,border-color,background-color]'
         } ${
-          task.status === 'running'
+          (task.status === 'queued' || task.status === 'running' || task.status === 'saving')
             ? 'border-blue-400 generating'
             : isSelected
             ? 'border-blue-500 shadow-md ring-2 ring-blue-500/50'
@@ -239,7 +257,7 @@ export default function TaskCard({
       <div className="flex h-40">
         {/* 左侧图片区域 */}
         <div className="w-40 min-w-[10rem] h-full bg-gray-100 dark:bg-black/20 relative flex items-center justify-center overflow-hidden flex-shrink-0">
-          {task.status === 'running' && (
+          {(task.status === 'queued' || task.status === 'running' || task.status === 'saving') && (
             <div className="flex flex-col items-center gap-2">
               <svg
                 className="w-8 h-8 text-blue-400 animate-spin"

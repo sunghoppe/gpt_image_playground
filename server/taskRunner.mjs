@@ -36,6 +36,7 @@ async function loadImageDataUrl(store, id) {
 
 export function createTaskRunner({ store }) {
   const runningTaskIds = new Set()
+  const taskTimeoutMs = Math.max(60_000, Number.parseInt(process.env.TASK_RUNNER_TIMEOUT_SECONDS || '1200', 10) * 1000)
 
   async function runTask(taskId) {
     if (runningTaskIds.has(taskId)) return
@@ -46,6 +47,7 @@ export function createTaskRunner({ store }) {
     try {
       const task = await store.getTask(taskId)
       if (!task) throw new Error('任务不存在')
+      await store.updateTask(taskId, { status: 'running', phase: '生成中' })
       const settings = await store.getPrivateSettings()
       if (!settings.apiKey) throw new Error('请先配置 API Key')
 
@@ -67,19 +69,26 @@ export function createTaskRunner({ store }) {
         hasMask: Boolean(maskDataUrl),
       })
 
-      const result = await callImageApi({
-        settings,
-        prompt: task.prompt,
-        params: task.params,
-        inputImageDataUrls,
-        maskDataUrl,
-      })
+      const result = await Promise.race([
+        callImageApi({
+          settings,
+          prompt: task.prompt,
+          params: task.params,
+          inputImageDataUrls,
+          maskDataUrl,
+        }),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`后台任务超时（${Math.round(taskTimeoutMs / 1000)} 秒）`)), taskTimeoutMs)
+        }),
+      ])
 
       logInfo('task.runner.upstream.response', {
         taskId,
         elapsedMs: elapsedMs(startedAt),
         imageCount: result.images.length,
       })
+
+      await store.updateTask(taskId, { status: 'saving', phase: '保存结果中' })
 
       const outputImages = []
       for (const dataUrl of result.images) {
@@ -105,6 +114,7 @@ export function createTaskRunner({ store }) {
         actualParamsByImage: actualParamsByImage && Object.keys(actualParamsByImage).length ? actualParamsByImage : undefined,
         revisedPromptByImage: revisedPromptByImage && Object.keys(revisedPromptByImage).length ? revisedPromptByImage : undefined,
         status: 'done',
+        phase: '已完成',
         error: null,
         finishedAt: Date.now(),
         elapsed: Date.now() - task.createdAt,
@@ -115,6 +125,7 @@ export function createTaskRunner({ store }) {
       const message = error instanceof Error ? error.message : String(error)
       await store.updateTask(taskId, {
         status: 'error',
+        phase: '已失败',
         error: message,
         finishedAt: Date.now(),
         elapsed: Date.now() - startedAt,
@@ -134,7 +145,8 @@ export function createTaskRunner({ store }) {
       maskTargetImageId,
       maskImageId,
       outputImages: [],
-      status: 'running',
+      status: 'queued',
+      phase: '排队中',
       error: null,
       createdAt: Date.now(),
       finishedAt: null,
