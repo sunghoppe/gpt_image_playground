@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey } from '../store'
+import { useStore, getCachedImageVariant, ensureImageVariantCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
@@ -60,13 +60,15 @@ export default function DetailModal() {
     ])]
     const initial: Record<string, string> = {}
     for (const id of ids) {
-      const cached = getCachedImage(id)
+      const variant = task.outputImages?.includes(id) ? 'preview' : 'original'
+      const cached = getCachedImageVariant(id, variant)
       if (cached) initial[id] = cached
     }
     setImageSrcs(initial)
     for (const id of ids) {
       if (initial[id]) continue
-      ensureImageCached(id).then((url) => {
+      const variant = task.outputImages?.includes(id) ? 'preview' : 'original'
+      ensureImageVariantCached(id, variant).then((url) => {
         if (!cancelled && url) setImageSrcs((prev) => ({ ...prev, [id]: url }))
       })
     }

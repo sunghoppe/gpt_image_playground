@@ -30,7 +30,20 @@ import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 // ===== Image cache =====
 // 鍐呭瓨缂撳瓨锛宨d 鈫?dataUrl锛岄伩鍏嶆瘡娆′粠鏈嶅姟绔鍙?
 
+type ImageVariant = 'original' | 'thumbnail' | 'preview'
+
 const imageCache = new Map<string, string>()
+const imageVariantCache = new Map<string, string>()
+
+function imageVariantCacheKey(id: string, variant: ImageVariant): string {
+  return `${variant}:${id}`
+}
+
+function deleteImageCaches(id: string) {
+  imageCache.delete(id)
+  imageVariantCache.delete(imageVariantCacheKey(id, 'thumbnail'))
+  imageVariantCache.delete(imageVariantCacheKey(id, 'preview'))
+}
 
 export function getCachedImage(id: string): string | undefined {
   return imageCache.get(id)
@@ -49,6 +62,22 @@ export async function ensureImageCached(id: string): Promise<string | undefined>
     return url
   }
   return undefined
+}
+
+export function getCachedImageVariant(id: string, variant: ImageVariant): string | undefined {
+  if (variant === 'original') return getCachedImage(id)
+  return imageVariantCache.get(imageVariantCacheKey(id, variant))
+}
+
+export async function ensureImageVariantCached(id: string, variant: ImageVariant): Promise<string | undefined> {
+  if (variant === 'original') return ensureImageCached(id)
+  const cacheKey = imageVariantCacheKey(id, variant)
+  if (imageVariantCache.has(cacheKey)) return imageVariantCache.get(cacheKey)
+  const rec = await getImage(id)
+  if (!rec) return undefined
+  const url = `/api/images/${encodeURIComponent(id)}/${variant}`
+  imageVariantCache.set(cacheKey, url)
+  return url
 }
 
 // ===== Store 绫诲瀷 =====
@@ -197,7 +226,7 @@ export const useStore = create<AppState>()(
         }),
       clearInputImages: () =>
         set((s) => {
-          for (const img of s.inputImages) imageCache.delete(img.id)
+          for (const img of s.inputImages) deleteImageCaches(img.id)
           return { inputImages: [], maskDraft: null, maskEditorImageId: null }
         }),
       setInputImages: (imgs) =>
@@ -588,7 +617,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
   for (const imgId of deletedImageIds) {
     if (!stillUsed.has(imgId)) {
       await deleteImage(imgId)
-      imageCache.delete(imgId)
+      deleteImageCaches(imgId)
     }
   }
 
@@ -630,7 +659,7 @@ export async function removeTask(task: TaskRecord) {
   for (const imgId of taskImageIds) {
     if (!stillUsed.has(imgId)) {
       await deleteImage(imgId)
-      imageCache.delete(imgId)
+      deleteImageCaches(imgId)
     }
   }
 
@@ -642,6 +671,7 @@ export async function clearAllData() {
   await dbClearTasks()
   await clearImages()
   imageCache.clear()
+  imageVariantCache.clear()
   const { setTasks, clearInputImages, clearMaskDraft, setSettings, setParams, showToast } = useStore.getState()
   setTasks([])
   clearInputImages()

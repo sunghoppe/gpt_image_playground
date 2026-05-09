@@ -281,6 +281,19 @@ async function handleApi(req, res, url) {
     return
   }
 
+  const imageVariantMatch = url.pathname.match(/^\/api\/images\/([^/]+)\/(thumbnail|preview)$/)
+  if (imageVariantMatch && req.method === 'GET') {
+    const content = await store.getImageVariantContent(decodeURIComponent(imageVariantMatch[1]), imageVariantMatch[2])
+    if (!content) return sendError(res, 404, '图片不存在')
+    res.writeHead(200, {
+      'Content-Type': content.mime,
+      'Content-Length': content.size,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    })
+    res.end(content.bytes)
+    return
+  }
+
   const imageMatch = url.pathname.match(/^\/api\/images\/([^/]+)$/)
   if (imageMatch && req.method === 'GET') {
     const image = await store.getImage(decodeURIComponent(imageMatch[1]))

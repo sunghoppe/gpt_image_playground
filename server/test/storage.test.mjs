@@ -4,6 +4,7 @@ import { access, mkdtemp, rm } from 'node:fs/promises'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import sharp from 'sharp'
 import { createDataStore, maskSecret } from '../storage.mjs'
 
 test('maskSecret keeps only the last four characters', () => {
@@ -78,15 +79,64 @@ test('deleteImage removes image metadata and file from disk', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gpt-image-store-'))
   try {
     const store = await createDataStore({ dataDir: dir, secret: 'test-secret' })
-    await store.putImage({ id: 'image-delete-test', dataUrl: 'data:image/png;base64,aGVsbG8=', source: 'generated' })
+    const source = await sharp({
+      create: {
+        width: 64,
+        height: 64,
+        channels: 4,
+        background: { r: 220, g: 80, b: 80, alpha: 1 },
+      },
+    }).png().toBuffer()
+    await store.putImage({ id: 'image-delete-test', dataUrl: `data:image/png;base64,${source.toString('base64')}`, source: 'generated' })
     const image = await store.getImage('image-delete-test')
     const filePath = join(dir, image.filePath)
+    const thumbnailPath = join(dir, image.thumbnailPath)
+    const previewPath = join(dir, image.previewPath)
     assert.equal(await exists(filePath), true)
+    assert.equal(await exists(thumbnailPath), true)
+    assert.equal(await exists(previewPath), true)
 
     await store.deleteImage('image-delete-test')
 
     assert.equal(await store.getImage('image-delete-test'), undefined)
     assert.equal(await exists(filePath), false)
+    assert.equal(await exists(thumbnailPath), false)
+    assert.equal(await exists(previewPath), false)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('putImage creates thumbnail and preview variants', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gpt-image-store-'))
+  try {
+    const store = await createDataStore({ dataDir: dir, secret: 'test-secret' })
+    const source = await sharp({
+      create: {
+        width: 2000,
+        height: 1000,
+        channels: 4,
+        background: { r: 60, g: 120, b: 180, alpha: 1 },
+      },
+    }).png().toBuffer()
+    await store.putImage({ id: 'image-variant-test', dataUrl: `data:image/png;base64,${source.toString('base64')}`, source: 'generated' })
+
+    const image = await store.getImage('image-variant-test')
+    assert.equal(await exists(join(dir, image.filePath)), true)
+    assert.equal(await exists(join(dir, image.thumbnailPath)), true)
+    assert.equal(await exists(join(dir, image.previewPath)), true)
+
+    const original = await store.getImageContent('image-variant-test')
+    const thumbnail = await store.getImageVariantContent('image-variant-test', 'thumbnail')
+    const preview = await store.getImageVariantContent('image-variant-test', 'preview')
+    const thumbnailMeta = await sharp(thumbnail.bytes).metadata()
+    const previewMeta = await sharp(preview.bytes).metadata()
+
+    assert.equal(original.mime, 'image/png')
+    assert.equal(thumbnail.mime, 'image/webp')
+    assert.equal(preview.mime, 'image/webp')
+    assert.equal(thumbnailMeta.width, 480)
+    assert.equal(previewMeta.width, 1600)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

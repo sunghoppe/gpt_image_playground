@@ -10,6 +10,7 @@ RUN npm ci
 
 COPY . .
 RUN npm run build
+RUN npm prune --omit=dev
 
 # ---- Production stage ----
 FROM node:20-alpine
@@ -21,6 +22,7 @@ ENV DATA_DIR=/data
 ENV PUBLIC_DIR=/app/dist
 
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules ./node_modules
 COPY server ./server
 COPY package.json ./package.json
 

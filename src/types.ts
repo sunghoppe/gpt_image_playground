@@ -106,6 +106,10 @@ export interface StoredImage {
   ext?: string
   sizeBytes?: number
   filePath?: string
+  thumbnailPath?: string
+  thumbnailSizeBytes?: number
+  previewPath?: string
+  previewSizeBytes?: number
   /** 图片首次存储时间（ms） */
   createdAt?: number
   /** 图片来源：用户上传 / API 生成 / 遮罩 */

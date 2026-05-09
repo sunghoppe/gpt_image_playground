@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import type { TaskRecord } from '../types'
-import { useStore, getCachedImage, ensureImageCached, updateTaskInStore } from '../store'
+import { useStore, getCachedImageVariant, ensureImageVariantCached, updateTaskInStore } from '../store'
 import { formatImageRatio } from '../lib/size'
 import { ParamValue } from '../lib/paramDisplay'
 
@@ -116,11 +116,11 @@ export default function TaskCard({
     setCoverSize('')
 
     if (task.outputImages?.[0]) {
-      const cached = getCachedImage(task.outputImages[0])
+      const cached = getCachedImageVariant(task.outputImages[0], 'thumbnail')
       if (cached) {
         setThumbSrc(cached)
       } else {
-        ensureImageCached(task.outputImages[0]).then((url) => {
+        ensureImageVariantCached(task.outputImages[0], 'thumbnail').then((url) => {
           if (url) setThumbSrc(url)
         })
       }

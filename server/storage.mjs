@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import sharp from 'sharp'
 
 const DEFAULT_SETTINGS = {
   apiProvider: 'openai',
@@ -32,6 +33,11 @@ const EXT_BY_MIME = {
   'image/gif': 'gif',
 }
 
+const IMAGE_VARIANTS = {
+  thumbnail: { maxWidth: 480, quality: 78 },
+  preview: { maxWidth: 1600, quality: 86 },
+}
+
 function parseDataUrl(dataUrl) {
   const match = DATA_URL_RE.exec(dataUrl || '')
   if (!match) throw new Error('无效的 data URL')
@@ -45,6 +51,11 @@ function parseDataUrl(dataUrl) {
 function getImageRelativePath(id, ext) {
   const safeId = String(id).replace(/[^a-zA-Z0-9._-]/g, '_')
   return join('images', safeId.slice(0, 2) || 'xx', safeId.slice(2, 4) || 'xx', `${safeId}.${ext}`)
+}
+
+function getImageVariantRelativePath(id, variant) {
+  const safeId = String(id).replace(/[^a-zA-Z0-9._-]/g, '_')
+  return join('images', variant, safeId.slice(0, 2) || 'xx', safeId.slice(2, 4) || 'xx', `${safeId}.webp`)
 }
 
 function toPublicImage(image) {
@@ -302,6 +313,62 @@ export async function createDataStore({ dataDir, secret }) {
     return { bytes, mime: image.mime || 'application/octet-stream', ext: image.ext || 'bin', size: bytes.length }
   }
 
+  async function createImageVariantFromBytes(image, variant, bytes) {
+    const options = IMAGE_VARIANTS[variant]
+    if (!options) return undefined
+    const filePath = getImageVariantRelativePath(image.id, variant)
+    const absolutePath = join(dataDir, filePath)
+    await mkdir(dirname(absolutePath), { recursive: true })
+    try {
+      const variantBytes = await sharp(bytes, { animated: false })
+        .rotate()
+        .resize({ width: options.maxWidth, height: options.maxWidth, fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: options.quality, effort: 4 })
+        .toBuffer()
+      await writeFile(absolutePath, variantBytes)
+      return { filePath, sizeBytes: variantBytes.length }
+    } catch {
+      return undefined
+    }
+  }
+
+  async function ensureImageVariant(image, variant) {
+    const pathKey = variant === 'thumbnail' ? 'thumbnailPath' : variant === 'preview' ? 'previewPath' : null
+    if (!pathKey) return undefined
+    if (image[pathKey] && existsSync(join(dataDir, image[pathKey]))) return image
+    const original = await getImageContent(image.id)
+    if (!original) return undefined
+    const generated = await createImageVariantFromBytes(image, variant, original.bytes)
+    if (!generated) return undefined
+    const patch = {
+      [pathKey]: generated.filePath,
+      [variant === 'thumbnail' ? 'thumbnailSizeBytes' : 'previewSizeBytes']: generated.sizeBytes,
+    }
+    return updateTaskLikeImage(image.id, patch)
+  }
+
+  async function updateTaskLikeImage(id, patch) {
+    let updatedImage
+    await update((state) => {
+      const image = state.images[id]
+      if (!image) return state
+      updatedImage = { ...image, ...patch }
+      state.images[id] = updatedImage
+      return state
+    })
+    return updatedImage
+  }
+
+  async function getImageVariantContent(id, variant) {
+    const image = await getImage(id)
+    if (!image) return undefined
+    const withVariant = await ensureImageVariant(image, variant)
+    const pathKey = variant === 'thumbnail' ? 'thumbnailPath' : variant === 'preview' ? 'previewPath' : null
+    if (!withVariant || !pathKey || !withVariant[pathKey]) return undefined
+    const bytes = await readFile(join(dataDir, withVariant[pathKey]))
+    return { bytes, mime: 'image/webp', ext: 'webp', size: bytes.length }
+  }
+
   async function getAllImages() {
     const images = Object.values((await readRawState()).images)
     return images.map(toPublicImage)
@@ -314,12 +381,20 @@ export async function createDataStore({ dataDir, secret }) {
     await mkdir(dirname(absolutePath), { recursive: true })
     await writeFile(absolutePath, bytes)
 
+    const baseImage = { id: image.id }
+    const thumbnail = await createImageVariantFromBytes(baseImage, 'thumbnail', bytes)
+    const preview = await createImageVariantFromBytes(baseImage, 'preview', bytes)
+
     const storedImage = {
       id: image.id,
       mime,
       ext,
       sizeBytes: bytes.length,
       filePath,
+      thumbnailPath: thumbnail?.filePath,
+      thumbnailSizeBytes: thumbnail?.sizeBytes,
+      previewPath: preview?.filePath,
+      previewSizeBytes: preview?.sizeBytes,
       createdAt: image.createdAt || Date.now(),
       source: image.source,
     }
@@ -337,6 +412,12 @@ export async function createDataStore({ dataDir, secret }) {
       const image = state.images[id]
       if (image?.filePath) {
         await rm(join(dataDir, image.filePath), { force: true })
+      }
+      if (image?.thumbnailPath) {
+        await rm(join(dataDir, image.thumbnailPath), { force: true })
+      }
+      if (image?.previewPath) {
+        await rm(join(dataDir, image.previewPath), { force: true })
       }
       delete state.images[id]
       return writeRawState(state)
@@ -377,6 +458,7 @@ export async function createDataStore({ dataDir, secret }) {
     markRunningTasksAsError,
     getImage,
     getImageContent,
+    getImageVariantContent,
     getAllImages,
     putImage,
     deleteImage,
