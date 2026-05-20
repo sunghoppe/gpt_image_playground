@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useStore, addImageFromUrl } from '../store'
 import { copyBlobToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { getOriginalImageDownloadUrl } from '../lib/imageDownload'
 
 export default function ImageContextMenu() {
   const [menuInfo, setMenuInfo] = useState<{ src: string; x: number; y: number } | null>(null)
@@ -83,7 +84,7 @@ export default function ImageContextMenu() {
     e.stopPropagation()
     setMenuInfo(null)
     try {
-      const res = await fetch(menuInfo.src)
+      const res = await fetch(getOriginalImageDownloadUrl(menuInfo.src), { cache: 'no-store' })
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
